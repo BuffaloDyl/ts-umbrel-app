@@ -2,13 +2,33 @@ import os
 import time
 import subprocess
 import requests
-from flask import Flask, request, jsonify, send_from_directory
+import logging
+from ipaddress import ip_address, ip_network
+from flask import Flask, request, jsonify, send_from_directory, abort
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__, static_folder="../web", static_url_path="")
 
 TUNNELSATS_API_URL = "https://tunnelsats.com/api/public/v1"
 DATA_DIR = "/data"
+
+# Umbrel internal docker subnet is 10.21.0.0/16 by default.
+ALLOWED_NETWORKS = [ip_network('127.0.0.0/8'), ip_network('10.21.0.0/16')]
+
+@app.before_request
+def restrict_local_api():
+    if request.path.startswith('/api/local/'):
+        remote_addr = request.remote_addr
+        if remote_addr:
+            try:
+                ip_obj = ip_address(remote_addr)
+                if not any(ip_obj in net for net in ALLOWED_NETWORKS):
+                    app.logger.warning(f"Unauthorized access attempt to {request.path} from {remote_addr}")
+                    abort(403)
+            except ValueError:
+                abort(403)
+        else:
+            abort(403)
 
 def get_active_vpn_info():
     port = None
@@ -125,8 +145,8 @@ def local_status():
             lnd_ip = lnd_out.decode().strip()
             cln_out = subprocess.check_output(["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "lightning_core-lightning_1"], stderr=subprocess.DEVNULL)
             cln_ip = cln_out.decode().strip()
-    except Exception:
-        pass
+    except Exception as e:
+        app.logger.error(f"Failed to fetch local status info: {e}")
 
     return jsonify({
         "wg_status": wg_status,
@@ -188,8 +208,8 @@ def configure_node():
             with open(lnd_path, "w") as f:
                 f.write(f"[Application Options]\nexternalhosts={dns}:{port}\n\n[Tor]\ntor.streamisolation=false\ntor.skip-proxy-for-clearnet-targets=true\n")
             lnd_success = True
-        except Exception:
-            pass
+        except Exception as e:
+            app.logger.error(f"Error configuring LND: {e}")
 
     cln_success = False
     cln_path = "/lightning-data/cln/config"
@@ -210,8 +230,8 @@ def configure_node():
             with open(cln_path, "w") as f:
                 f.writelines(new_lines)
             cln_success = True
-        except Exception:
-            pass
+        except Exception as e:
+            app.logger.error(f"Error configuring CLN: {e}")
 
     return jsonify({"lnd": lnd_success, "cln": cln_success, "port": port, "dns": dns})
 
@@ -223,8 +243,8 @@ def restore_node():
         try:
             os.remove(lnd_path)
             lnd_success = True
-        except Exception:
-            pass
+        except Exception as e:
+            app.logger.error(f"Error removing LND config: {e}")
 
     cln_success = False
     cln_path = "/lightning-data/cln/config"
@@ -241,8 +261,8 @@ def restore_node():
             with open(cln_path, "w") as f:
                 f.writelines(new_lines)
             cln_success = True
-        except Exception:
-            pass
+        except Exception as e:
+            app.logger.error(f"Error reverting CLN config: {e}")
 
     configs_cleaned = False
     if os.path.exists(DATA_DIR):
@@ -251,8 +271,8 @@ def restore_node():
                 if f.endswith(".conf"):
                     os.remove(os.path.join(DATA_DIR, f))
             configs_cleaned = True
-        except Exception:
-            pass
+        except Exception as e:
+            app.logger.error(f"Error cleaning up old configurations: {e}")
 
     return jsonify({"lnd": lnd_success, "cln": cln_success, "configs_cleaned": configs_cleaned})
 

@@ -6,22 +6,19 @@ IMAGE="tunnelsats/umbrel-app:test"
 echo "Building local test image..."
 docker build -t $IMAGE .
 
-echo "Testing if python3 is installed..."
-docker run --rm --entrypoint="" $IMAGE python3 --version
+echo "Testing dependencies via container..."
+declare -a cmds=(
+    "python3 --version"
+    "wg --version"
+    "curl --version"
+    "jq --version"
+    "python3 -c \"import flask; print('Flask found!')\""
+    "python3 -c \"import requests; print('Requests found!')\""
+)
 
-echo "Testing if wireguard is installed..."
-docker run --rm --entrypoint="" $IMAGE wg --version
-
-echo "Testing if curl is installed..."
-docker run --rm --entrypoint="" $IMAGE curl --version
-
-echo "Testing if jq is installed..."
-docker run --rm --entrypoint="" $IMAGE jq --version
-
-echo "Testing if flask is available..."
-docker run --rm --entrypoint="" $IMAGE python3 -c "import flask; print('Flask found!')"
-
-echo "Testing if requests is available..."
-docker run --rm --entrypoint="" $IMAGE python3 -c "import requests; print('Requests found!')"
+for cmd in "${cmds[@]}"; do
+    echo ">> Checking: $cmd"
+    docker run --rm --entrypoint="" $IMAGE sh -c "$cmd"
+done
 
 echo "All structure tests passed successfully!"
