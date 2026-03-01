@@ -1,6 +1,7 @@
 version: '3.7'
 services:
   tunnelsats:
+    build: .
     image: tunnelsats/umbrel-app:v2.0.0
     container_name: tunnelsats
     restart: on-failure
@@ -12,6 +13,6 @@ services:
       - apparmor:unconfined
     volumes:
       # Mount the app's persistent storage for configs
-      - ${APP_DATA_DIR:-./data}/data:/data
+      - ${APP_DATA_DIR:-./data}:/data
       # Required to interrogate container IPs dynamically (Umbrel 1.6+)
       - /var/run/docker.sock:/var/run/docker.sock:ro

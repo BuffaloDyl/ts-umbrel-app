@@ -37,7 +37,7 @@ done
 
 echo "Target Node IPs - LND: ${LND_IP:-None}, CLN: ${CLN_IP:-None}"
 
-CONFIG_FILE=$(ls /data/tunnelsats*.conf 2>/dev/null | head -n 1)
+CONFIG_FILE=$(find /data -name "tunnelsats*.conf" -type f | head -n 1)
 if [ -z "$CONFIG_FILE" ]; then
     echo "ERROR: No Wireguard configuration found in /data. Please place your config file there."
     sleep 30
