@@ -48,8 +48,7 @@ async function fetchStatus() {
         // Setup pubkey for renewal
         document.getElementById('renew-pubkey').value = pk;
         if (pk !== "Not available" && purchaseMode === "buy") {
-            // If there's an active status at load, suggest Renew instead of Buy
-            purchaseMode = "renew"; // Will be applied visually via JS if needed, but safe to just let the UI handle it via setPurchaseMode.
+            setPurchaseMode('renew');
         }
 
         let confs = data.configs_found.length > 0 ? data.configs_found.join(", ") : "None Detected";
@@ -110,6 +109,22 @@ async function createSub() {
 
     if (!serverId) return;
 
+    // Helper for ui errors
+    function displayPurchaseError(msg) {
+        let errEl = document.getElementById('purchase-error');
+        if (!errEl) {
+            errEl = document.createElement('p');
+            errEl.id = 'purchase-error';
+            errEl.className = 'text-red-500 font-bold text-center mt-2';
+            const container = document.getElementById('btn-create').parentNode;
+            container.appendChild(errEl);
+        }
+        errEl.innerText = msg;
+    }
+
+    const oldErr = document.getElementById('purchase-error');
+    if (oldErr) oldErr.remove();
+
     document.getElementById('btn-create').innerText = "Loading...";
     document.getElementById('btn-create').disabled = true;
 
@@ -122,7 +137,7 @@ async function createSub() {
             const wgPublicKey = document.getElementById('renew-pubkey').value;
             payload = { serverId, duration, wgPublicKey };
             if (!wgPublicKey || wgPublicKey === "Not available") {
-                alert("Cannot renew without an active public key from a connected VPN.");
+                displayPurchaseError("Cannot renew without an active public key from a connected VPN.");
                 document.getElementById('btn-create').innerText = "Generate Lightning Invoice";
                 document.getElementById('btn-create').disabled = false;
                 return;
@@ -146,7 +161,7 @@ async function createSub() {
             pollInterval = setInterval(pollPayment, 3000);
         }
     } catch (e) {
-        alert("Error creating subscription: " + e.message);
+        displayPurchaseError("Error creating subscription: " + e.message);
     } finally {
         document.getElementById('btn-create').innerText = "Generate Lightning Invoice";
         document.getElementById('btn-create').disabled = false;
@@ -163,10 +178,37 @@ async function pollPayment() {
         if (data.status === 'PAID') {
             clearInterval(pollInterval);
             if (purchaseMode === 'buy') {
-                document.getElementById('invoice-box').innerHTML = `<h3 class="text-tsgreen font-bold text-center mb-2">Payment Received!</h3><p class="text-sm text-gray-300 text-center">Provisioning VPN config...</p>`;
+                const invoiceBox = document.getElementById('invoice-box');
+                invoiceBox.innerHTML = ''; // Clear content
+
+                const h3 = document.createElement('h3');
+                h3.className = 'text-tsgreen font-bold text-center mb-2';
+                h3.textContent = 'Payment Received!';
+
+                const p = document.createElement('p');
+                p.className = 'text-sm text-gray-300 text-center';
+                p.textContent = 'Provisioning VPN config...';
+
+                invoiceBox.append(h3, p);
                 claimSubscription();
             } else {
-                document.getElementById('invoice-box').innerHTML = `<h3 class="text-tsgreen font-bold text-center mb-2">Renewal Successful!</h3><p class="text-sm text-gray-300 text-center mb-4">Your VPN subscription has been extended successfully. No restarts required.</p><button onclick="switchTab('dashboard');" class="mt-4 w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-2 px-6 rounded transition">Return to Dashboard</button>`;
+                const invoiceBox = document.getElementById('invoice-box');
+                invoiceBox.innerHTML = ''; // Clear content
+
+                const h3 = document.createElement('h3');
+                h3.className = 'text-tsgreen font-bold text-center mb-2';
+                h3.textContent = 'Renewal Successful!';
+
+                const p = document.createElement('p');
+                p.className = 'text-sm text-gray-300 text-center mb-4';
+                p.textContent = 'Your VPN subscription has been extended successfully. No restarts required.';
+
+                const button = document.createElement('button');
+                button.className = 'mt-4 w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-2 px-6 rounded transition';
+                button.textContent = 'Return to Dashboard';
+                button.onclick = () => switchTab('dashboard');
+
+                invoiceBox.append(h3, p, button);
             }
         }
     } catch (e) { }
@@ -182,9 +224,40 @@ async function claimSubscription() {
 
         if (res.ok) {
             const configMsg = await configureNode();
-            document.getElementById('invoice-box').innerHTML = `<h3 class="text-tsgreen font-bold text-center mb-2">Installation Complete!</h3><p class="text-sm text-gray-300 text-center mb-2">Your VPN configuration has been securely stored.</p><p class="text-xs text-tsyellow text-center mb-4">${configMsg}</p><button onclick="restartTunnel(); switchTab('dashboard');" class="mt-4 w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-2 px-6 rounded transition">Restart Apps & Tunnel</button>`;
+            const invoiceBox = document.getElementById('invoice-box');
+            invoiceBox.innerHTML = '';
+
+            const h3 = document.createElement('h3');
+            h3.className = 'text-tsgreen font-bold text-center mb-2';
+            h3.textContent = 'Installation Complete!';
+
+            const p1 = document.createElement('p');
+            p1.className = 'text-sm text-gray-300 text-center mb-2';
+            p1.textContent = 'Your VPN configuration has been securely stored.';
+
+            const p2 = document.createElement('p');
+            p2.className = 'text-xs text-tsyellow text-center mb-4';
+            p2.textContent = configMsg;
+
+            const button = document.createElement('button');
+            button.className = 'mt-4 w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-2 px-6 rounded transition';
+            button.textContent = 'Restart Apps & Tunnel';
+            button.onclick = () => { restartTunnel(); switchTab('dashboard'); };
+
+            invoiceBox.append(h3, p1, p2, button);
         } else {
-            document.getElementById('invoice-box').innerHTML = `<h3 class="text-red-500 font-bold text-center mb-2">Provisioning Error</h3><p class="text-sm text-gray-300 text-center">Payment was successful, but config provisioning failed.</p>`;
+            const invoiceBox = document.getElementById('invoice-box');
+            invoiceBox.innerHTML = '';
+
+            const h3 = document.createElement('h3');
+            h3.className = 'text-red-500 font-bold text-center mb-2';
+            h3.textContent = 'Provisioning Error';
+
+            const p = document.createElement('p');
+            p.className = 'text-sm text-gray-300 text-center';
+            p.textContent = 'Payment was successful, but config provisioning failed.';
+
+            invoiceBox.append(h3, p);
         }
     } catch (e) { }
 }
@@ -262,11 +335,12 @@ async function restoreNode() {
         const res = await fetch('/api/local/restore-node', { method: 'POST' });
         const data = await res.json();
 
-        let text = "Cleanup results: ";
-        if (data.lnd) text += "LND config removed. ";
-        if (data.cln) text += "CLN config reverted. ";
-        if (data.configs_cleaned) text += "VPN configs deleted. ";
-        if (!data.lnd && !data.cln && !data.configs_cleaned) text += "No modifications found. ";
+        const messages = [];
+        if (data.lnd) messages.push("LND config removed.");
+        if (data.cln) messages.push("CLN config reverted.");
+        if (data.configs_cleaned) messages.push("VPN configs deleted.");
+
+        let text = `Cleanup results: ${messages.length > 0 ? messages.join(' ') : 'No modifications found.'}`;
 
         msg.innerText = text;
         msg.className = "text-center mt-6 text-sm font-bold text-tsgreen";

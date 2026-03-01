@@ -25,6 +25,7 @@ LND_IP=""
 CLN_IP=""
 
 echo "Querying Docker API for Lightning Node IPs..."
+RETRY_COUNT=0
 while true; do
     LND_IP=$(get_container_ip "lightning_lnd_1")
     CLN_IP=$(get_container_ip "lightning_core-lightning_1")
@@ -32,6 +33,12 @@ while true; do
     if [ -n "$LND_IP" ] || [ -n "$CLN_IP" ]; then
         break
     fi
+    
+    RETRY_COUNT=$((RETRY_COUNT+1))
+    if [ "$RETRY_COUNT" -eq 60 ]; then
+        echo "WARNING: Have been waiting 5 minutes for LND/CLN to initialize... Still waiting indefinitely."
+    fi
+    
     echo "Waiting for LND or CLN containers to initialize... Retrying in 5 seconds."
     sleep 5
 done
