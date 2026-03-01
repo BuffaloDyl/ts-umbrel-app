@@ -1,0 +1,48 @@
+name: TDD Docker Tests
+
+on:
+  push:
+    branches: [ "main", "feat/*" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test-compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Generate Dummy Wireguard Keypair
+        run: |
+          sudo apt-get update && sudo apt-get install -y wireguard-tools
+          wg genkey | tee privatekey | wg pubkey > publickey
+          cat <<EOF > data/tunnelsats-dev.conf
+          [Interface]
+          PrivateKey = $(cat privatekey)
+          Address = 10.9.0.2/24
+
+          [Peer]
+          PublicKey = $(cat publickey)
+          Endpoint = 192.0.2.1:51820
+          AllowedIPs = 0.0.0.0/0
+          EOF
+
+      - name: Start Mock Umbrel Compose
+        run: docker compose -f docker-compose.test.yml up -d
+
+      - name: Build and Start Tunnelsats
+        run: |
+          docker compose build tunnelsats
+          docker compose up -d tunnelsats
+
+      - name: Assert Target Container Recognition
+        run: |
+          sleep 10
+          docker logs tunnelsats
+          if ! docker logs tunnelsats | grep -q "10.21.21.9"; then
+            echo "ERROR: Did not resolve LND container IP"
+            exit 1
+          fi
+          if docker logs tunnelsats | grep -q "Killswitch"; then
+             echo "Killswitch engaged successfully."
+          fi
