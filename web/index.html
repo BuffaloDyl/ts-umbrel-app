@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -20,11 +21,24 @@
         }
     </script>
     <style>
-        body { background-color: #111827; color: white; font-family: 'Inter', sans-serif; }
-        .tab-active { border-bottom: 2px solid #22c55e; color: #22c55e; font-weight: bold; }
-        .hidden { display: none; }
+        body {
+            background-color: #111827;
+            color: white;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .tab-active {
+            border-bottom: 2px solid #22c55e;
+            color: #22c55e;
+            font-weight: bold;
+        }
+
+        .hidden {
+            display: none;
+        }
     </style>
 </head>
+
 <body class="p-6 h-screen flex flex-col">
 
     <div class="max-w-4xl mx-auto w-full flex-grow flex flex-col">
@@ -33,7 +47,8 @@
             <div class="flex items-center space-x-4">
                 <img src="/img/brand/logo.svg" alt="Tunnelsats Logo" class="h-12 w-12">
                 <div>
-                    <h1 class="text-2xl font-bold tracking-wider">Tunnelsats <span class="bg-tsgreen text-black px-2 py-0.5 rounded text-sm italic">v3</span></h1>
+                    <h1 class="text-2xl font-bold tracking-wider">Tunnelsats <span
+                            class="bg-tsgreen text-black px-2 py-0.5 rounded text-sm italic">v3</span></h1>
                     <p class="text-gray-400 text-sm">Lightning VPN Isolation</p>
                 </div>
             </div>
@@ -44,9 +59,12 @@
 
         <!-- Navigation Tabs -->
         <nav class="flex space-x-6 pt-4 mb-6 text-gray-400">
-            <button onclick="switchTab('dashboard')" id="tab-dashboard" class="pb-2 tab-active hover:text-white transition">Dashboard</button>
-            <button onclick="switchTab('purchase')" id="tab-purchase" class="pb-2  hover:text-white transition">Purchase / Renew</button>
-            <button onclick="switchTab('import')" id="tab-import" class="pb-2 hover:text-white transition">Import Config</button>
+            <button onclick="switchTab('dashboard')" id="tab-dashboard"
+                class="pb-2 tab-active hover:text-white transition">Dashboard</button>
+            <button onclick="switchTab('purchase')" id="tab-purchase" class="pb-2  hover:text-white transition">Purchase
+                / Renew</button>
+            <button onclick="switchTab('import')" id="tab-import" class="pb-2 hover:text-white transition">Import
+                Config</button>
         </nav>
 
         <!-- Main Content Area -->
@@ -68,7 +86,8 @@
                             <span class="text-gray-400 text-sm mb-1">Public Key</span>
                             <span id="txt-pubkey" class="font-mono text-xs bg-gray-800 p-2 rounded truncate">...</span>
                         </div>
-                        <button onclick="restartTunnel()" class="mt-4 w-full bg-gray-700 hover:bg-gray-600 font-semibold py-2 rounded transition border border-gray-600">
+                        <button onclick="restartTunnel()"
+                            class="mt-4 w-full bg-gray-700 hover:bg-gray-600 font-semibold py-2 rounded transition border border-gray-600">
                             Restart tunnel interface
                         </button>
                     </div>
@@ -76,7 +95,9 @@
 
                 <div class="bg-cardbg rounded-xl p-6 border border-gray-700 shadow-xl">
                     <h2 class="text-xl font-semibold mb-4 text-tsgreen">Node Protection</h2>
-                    <p class="text-sm text-gray-400 mb-4">Traffic originating from these IPs is isolated and routed strictly through the VPN tunnel. Your backend node IPs are identified automatically by the app.</p>
+                    <p class="text-sm text-gray-400 mb-4">Traffic originating from these IPs is isolated and routed
+                        strictly through the VPN tunnel. Your backend node IPs are identified automatically by the app.
+                    </p>
                     <div class="space-y-3">
                         <div class="flex justify-between border-b border-gray-700 pb-2">
                             <span class="text-gray-400">LND Container IP</span>
@@ -89,7 +110,9 @@
                         <!-- Need Node Routing Setup Config -->
                         <div class="mt-4 p-4 bg-yellow-900/30 border border-yellow-700 rounded text-sm">
                             <strong class="text-tsyellow block mb-2">Important Next Step</strong>
-                            You MUST configure your LND or Core Lightning app manually to bind external routes to your Tunnelsats VPN. <a href="https://tunnelsats.com/guide" target="_blank" class="text-tsgreen hover:underline">Read the Setup Guide</a>
+                            You MUST configure your LND or Core Lightning app manually to bind external routes to your
+                            Tunnelsats VPN. <a href="https://tunnelsats.com/guide" target="_blank"
+                                class="text-tsgreen hover:underline">Read the Setup Guide</a>
                         </div>
                     </div>
                 </div>
@@ -99,46 +122,59 @@
             <section id="view-purchase" class="hidden">
                 <div class="bg-cardbg rounded-xl p-6 border border-gray-700 shadow-xl max-w-2xl mx-auto">
                     <h2 class="text-2xl font-semibold mb-2 text-tsgreen">Buy New Subscription</h2>
-                    <p class="text-gray-400 mb-6">Select a regional server, generate a Lightning Invoice, and scan to pay. Your VPN config will securely auto-install after payment.</p>
-                    
+                    <p class="text-gray-400 mb-6">Select a regional server, generate a Lightning Invoice, and scan to
+                        pay. Your VPN config will securely auto-install after payment.</p>
+
                     <div class="space-y-4">
                         <div>
                             <label class="block text-gray-400 text-sm mb-1">1. Choose Location</label>
-                            <select id="server-select" class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white">
+                            <select id="server-select"
+                                class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white">
                                 <option value="">Loading servers...</option>
                             </select>
                         </div>
                         <div>
                             <label class="block text-gray-400 text-sm mb-1">2. Duration (Months)</label>
-                            <select id="duration-select" class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white">
+                            <select id="duration-select"
+                                class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white">
                                 <option value="1">1 Month</option>
                                 <option value="3">3 Months (5% off)</option>
                                 <option value="6">6 Months (10% off)</option>
                                 <option value="12">12 Months (20% off)</option>
                             </select>
                         </div>
-                        
-                        <div id="invoice-box" class="hidden mt-6 p-4 border border-tsgreen rounded bg-black flex flex-col items-center">
+
+                        <div id="invoice-box"
+                            class="hidden mt-6 p-4 border border-tsgreen rounded bg-black flex flex-col items-center">
                             <h3 class="text-tsgreen font-bold mb-2">Awaiting Payment...</h3>
-                            <textarea id="invoice-bolt11" class="w-full bg-gray-900 p-2 text-xs font-mono rounded mb-4" rows="4" readonly></textarea>
-                            <a id="pay-link" href="#" class="bg-tsgreen hover:bg-green-600 text-black font-bold py-2 px-6 rounded-full transition w-full text-center">Open Internal Wallet</a>
+                            <textarea id="invoice-bolt11" class="w-full bg-gray-900 p-2 text-xs font-mono rounded mb-4"
+                                rows="4" readonly></textarea>
+                            <a id="pay-link" href="#"
+                                class="bg-tsgreen hover:bg-green-600 text-black font-bold py-2 px-6 rounded-full transition w-full text-center">Open
+                                Internal Wallet</a>
                         </div>
-                        
-                        <button id="btn-create" onclick="createSub()" class="w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-3 rounded transition mt-4">
+
+                        <button id="btn-create" onclick="createSub()"
+                            class="w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-3 rounded transition mt-4">
                             Generate Lightning Invoice
                         </button>
                     </div>
                 </div>
             </section>
 
-             <!-- Import View -->
-             <section id="view-import" class="hidden">
+            <!-- Import View -->
+            <section id="view-import" class="hidden">
                 <div class="bg-cardbg rounded-xl p-6 border border-gray-700 shadow-xl max-w-2xl mx-auto">
                     <h2 class="text-2xl font-semibold mb-2 text-tsyellow">Legacy Migration</h2>
-                    <p class="text-gray-400 mb-6">If you updated to Umbrel 1.6+ and already have a valid Tunnelsats configuration, simply paste your original <code>tunnelsats.conf</code> below. We will securely store it to your persistent app volume.</p>
-                    <textarea id="config-text" class="w-full h-64 bg-gray-800 border border-gray-600 rounded p-4 text-sm font-mono text-gray-300" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;&#10;[Peer]&#10;PublicKey = ..."></textarea>
-                    
-                    <button onclick="importConfig()" class="w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 rounded transition mt-4 border border-gray-500">
+                    <p class="text-gray-400 mb-6">If you updated to Umbrel 1.6+ and already have a valid Tunnelsats
+                        configuration, simply paste your original <code>tunnelsats.conf</code> below. We will securely
+                        store it to your persistent app volume.</p>
+                    <textarea id="config-text"
+                        class="w-full h-64 bg-gray-800 border border-gray-600 rounded p-4 text-sm font-mono text-gray-300"
+                        placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;VPNPort = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;PresharedKey = ...&#10;Endpoint = ...&#10;AllowedIPs = 0.0.0.0/0, ::/0&#10;PersistentKeepalive = 25"></textarea>
+
+                    <button onclick="importConfig()"
+                        class="w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 rounded transition mt-4 border border-gray-500">
                         Securely Import Config
                     </button>
                     <p id="import-msg" class="text-center mt-4 text-sm"></p>
@@ -150,4 +186,5 @@
     <!-- Logic -->
     <script src="/js/app.js"></script>
 </body>
+
 </html>

@@ -16,6 +16,7 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y wireguard-tools
           wg genkey | tee privatekey | wg pubkey > publickey
+          wg genpsk > presharedkey
           cat <<EOF > data/tunnelsats-dev.conf
           [Interface]
           PrivateKey = $(cat privatekey)
@@ -23,8 +24,10 @@ jobs:
 
           [Peer]
           PublicKey = $(cat publickey)
+          PresharedKey = $(cat presharedkey)
           Endpoint = 192.0.2.1:51820
           AllowedIPs = 0.0.0.0/0
+          PersistentKeepalive = 25
           EOF
 
       - name: Start Mock Umbrel Compose
