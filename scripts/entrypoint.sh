@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "Starting Tunnelsats v2 (Umbrel App)..."
+echo "Starting Tunnelsats v3 (Umbrel App)..."
 
 # Ensure we have docker socket access (for testing/prod)
 if [ ! -S /var/run/docker.sock ]; then
