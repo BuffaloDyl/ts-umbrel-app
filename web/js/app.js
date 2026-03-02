@@ -47,9 +47,6 @@ async function fetchStatus() {
 
         // Setup pubkey for renewal
         document.getElementById('renew-pubkey').value = pk;
-        if (pk !== "Not available" && purchaseMode === "buy") {
-            setPurchaseMode('renew');
-        }
 
         let confs = data.configs_found.length > 0 ? data.configs_found.join(", ") : "None Detected";
         document.getElementById('txt-configs').innerText = confs;
@@ -67,79 +64,88 @@ async function fetchServers() {
     try {
         const res = await fetch('/api/servers');
         const servers = await res.json();
-        const sel = document.getElementById('server-select');
-        sel.innerHTML = "";
+
+        const selBuy = document.getElementById('buy-server-select');
+        const selRenew = document.getElementById('renew-server-select');
+
+        selBuy.innerHTML = "";
+        selRenew.innerHTML = "";
+
         servers.forEach(s => {
-            let opt = document.createElement('option');
-            opt.value = s.id;
-            opt.innerText = `${s.country} - ${s.city} (Port: ${s.wireguardPort})`;
-            sel.appendChild(opt);
+            let opt1 = document.createElement('option');
+            opt1.value = s.id;
+            opt1.innerText = `${s.country} - ${s.city} (Port: ${s.wireguardPort})`;
+            selBuy.appendChild(opt1);
+
+            let opt2 = document.createElement('option');
+            opt2.value = s.id;
+            opt2.innerText = `${s.country} - ${s.city} (Port: ${s.wireguardPort})`;
+            selRenew.appendChild(opt2);
         });
     } catch (e) { }
 }
 
-// Purchase / Renew Mode Switch
-function setPurchaseMode(mode) {
-    purchaseMode = mode;
-    const title = document.getElementById('purchase-title');
-    const desc = document.getElementById('purchase-desc');
-    const pubBox = document.getElementById('renew-pubkey-box');
-    const btnBuy = document.getElementById('mode-buy');
-    const btnRenew = document.getElementById('mode-renew');
+// Purchase / Renew Mode Switch (Removed, handled by tabs now)
+
+// Initialize QRCodes
+let qrBuy = null;
+let qrRenew = null;
+
+function renderQR(mode, text) {
+    const boxId = `qr-placeholder-${mode}`;
+    const box = document.getElementById(boxId);
+    box.innerHTML = ""; // Clear placeholder
 
     if (mode === 'buy') {
-        title.innerText = "Buy New Subscription";
-        desc.innerText = "Select a regional server, generate a Lightning Invoice, and scan to pay. Your VPN config will securely auto-install after payment.";
-        pubBox.classList.add('hidden');
-        btnBuy.className = "px-4 py-1.5 rounded bg-slate-700 text-white font-semibold text-sm transition shadow";
-        btnRenew.className = "px-4 py-1.5 rounded text-gray-400 font-semibold text-sm hover:text-white transition";
+        if (!qrBuy) qrBuy = new QRCode(box, { width: 192, height: 192 });
+        qrBuy.makeCode(text);
     } else {
-        title.innerText = "Renew Existing Target";
-        desc.innerText = "Extend the duration of your active subscription. You don't need to reinstall the VPN configuration.";
-        pubBox.classList.remove('hidden');
-        btnRenew.className = "px-4 py-1.5 rounded bg-slate-700 text-white font-semibold text-sm transition shadow";
-        btnBuy.className = "px-4 py-1.5 rounded text-gray-400 font-semibold text-sm hover:text-white transition";
+        if (!qrRenew) qrRenew = new QRCode(box, { width: 192, height: 192 });
+        qrRenew.makeCode(text);
     }
 }
 
 // 3. Purchase Flow
-async function createSub() {
-    const serverId = document.getElementById('server-select').value;
-    const duration = parseInt(document.getElementById('duration-select').value);
+async function createSub(mode) {
+    const serverId = document.getElementById(`${mode}-server-select`).value;
+    const duration = parseInt(document.getElementById(`${mode}-duration-select`).value);
+
+    // Save purchase mode globally for polling
+    purchaseMode = mode;
 
     if (!serverId) return;
 
     // Helper for ui errors
     function displayPurchaseError(msg) {
-        let errEl = document.getElementById('purchase-error');
+        let errEl = document.getElementById(`purchase-error-${mode}`);
         if (!errEl) {
             errEl = document.createElement('p');
-            errEl.id = 'purchase-error';
+            errEl.id = `purchase-error-${mode}`;
             errEl.className = 'text-red-500 font-bold text-center mt-2';
-            const container = document.getElementById('btn-create').parentNode;
+            const container = document.getElementById(`btn-create-${mode}`).parentNode;
             container.appendChild(errEl);
         }
         errEl.innerText = msg;
     }
 
-    const oldErr = document.getElementById('purchase-error');
+    const oldErr = document.getElementById(`purchase-error-${mode}`);
     if (oldErr) oldErr.remove();
 
-    document.getElementById('btn-create').innerText = "Loading...";
-    document.getElementById('btn-create').disabled = true;
+    document.getElementById(`btn-create-${mode}`).innerText = "Loading...";
+    document.getElementById(`btn-create-${mode}`).disabled = true;
 
     try {
         let endpoint = '/api/subscription/create';
         let payload = { serverId, duration, referralCode: null };
 
-        if (purchaseMode === 'renew') {
+        if (mode === 'renew') {
             endpoint = '/api/subscription/renew';
             const wgPublicKey = document.getElementById('renew-pubkey').value;
             payload = { serverId, duration, wgPublicKey };
             if (!wgPublicKey || wgPublicKey === "Not available") {
                 displayPurchaseError("Cannot renew without an active public key from a connected VPN.");
-                document.getElementById('btn-create').innerText = "Generate Lightning Invoice";
-                document.getElementById('btn-create').disabled = false;
+                document.getElementById(`btn-create-${mode}`).innerText = "Generate Renewal Invoice";
+                document.getElementById(`btn-create-${mode}`).disabled = false;
                 return;
             }
         }
@@ -153,18 +159,22 @@ async function createSub() {
 
         if (data.paymentHash && data.invoice) {
             activePaymentHash = data.paymentHash;
-            document.getElementById('invoice-bolt11').value = data.invoice;
-            document.getElementById('pay-link').href = `lightning:${data.invoice}`;
-            document.getElementById('invoice-box').classList.remove('hidden');
+            document.getElementById(`invoice-bolt11-${mode}`).value = data.invoice;
+            document.getElementById(`pay-link-${mode}`).href = `lightning:${data.invoice}`;
+
+            renderQR(mode, data.invoice);
+            document.getElementById(`invoice-box-${mode}`).classList.remove('hidden');
 
             // Start Polling
             pollInterval = setInterval(pollPayment, 3000);
+        } else if (data.message) {
+            displayPurchaseError(data.message);
         }
     } catch (e) {
         displayPurchaseError("Error creating subscription: " + e.message);
     } finally {
-        document.getElementById('btn-create').innerText = "Generate Lightning Invoice";
-        document.getElementById('btn-create').disabled = false;
+        document.getElementById(`btn-create-${mode}`).innerText = mode === 'renew' ? "Generate Renewal Invoice" : "Generate Lightning Invoice";
+        document.getElementById(`btn-create-${mode}`).disabled = false;
     }
 }
 
@@ -177,24 +187,28 @@ async function pollPayment() {
 
         if (data.status === 'PAID') {
             clearInterval(pollInterval);
-            if (purchaseMode === 'buy') {
-                const invoiceBox = document.getElementById('invoice-box');
-                invoiceBox.innerHTML = ''; // Clear content
+            const invoiceBox = document.getElementById(`invoice-box-${purchaseMode}`);
+            invoiceBox.innerHTML = ''; // Clear content
 
+            if (purchaseMode === 'buy') {
                 const h3 = document.createElement('h3');
                 h3.className = 'text-tsgreen font-bold text-center mb-2';
                 h3.textContent = 'Payment Received!';
 
                 const p = document.createElement('p');
-                p.className = 'text-sm text-gray-300 text-center';
-                p.textContent = 'Provisioning VPN config...';
+                p.className = 'text-sm text-gray-300 text-center mb-4';
+                p.textContent = 'Proceed to the Install tab to finalize your setup.';
 
-                invoiceBox.append(h3, p);
-                claimSubscription();
+                const button = document.createElement('button');
+                button.className = 'mt-4 w-full bg-tsgreen hover:bg-cyan-500 text-gray-900 font-bold py-2 px-6 rounded transition shadow-lg';
+                button.textContent = 'Proceed to Installation';
+                button.onclick = () => {
+                    document.getElementById('pending-install-section').classList.remove('hidden');
+                    switchTab('import');
+                };
+
+                invoiceBox.append(h3, p, button);
             } else {
-                const invoiceBox = document.getElementById('invoice-box');
-                invoiceBox.innerHTML = ''; // Clear content
-
                 const h3 = document.createElement('h3');
                 h3.className = 'text-tsgreen font-bold text-center mb-2';
                 h3.textContent = 'Renewal Successful!';
@@ -204,7 +218,7 @@ async function pollPayment() {
                 p.textContent = 'Your VPN subscription has been extended successfully. No restarts required.';
 
                 const button = document.createElement('button');
-                button.className = 'mt-4 w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-2 px-6 rounded transition';
+                button.className = 'mt-4 w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-2 px-6 rounded transition shadow-lg';
                 button.textContent = 'Return to Dashboard';
                 button.onclick = () => switchTab('dashboard');
 
@@ -214,7 +228,14 @@ async function pollPayment() {
     } catch (e) { }
 }
 
-async function claimSubscription() {
+async function claimSubscription(mode) {
+    let btnInstall = null;
+    if (mode === 'import') {
+        btnInstall = document.getElementById('btn-claim-install');
+        btnInstall.disabled = true;
+        btnInstall.innerText = "Installing...";
+    }
+
     try {
         const res = await fetch('/api/subscription/claim', {
             method: 'POST',
@@ -222,10 +243,11 @@ async function claimSubscription() {
             body: JSON.stringify({ paymentHash: activePaymentHash, referralCode: null })
         });
 
+        const invoiceBox = document.getElementById(`invoice-box-${mode}`);
+        invoiceBox.innerHTML = '';
+
         if (res.ok) {
             const configMsg = await configureNode();
-            const invoiceBox = document.getElementById('invoice-box');
-            invoiceBox.innerHTML = '';
 
             const h3 = document.createElement('h3');
             h3.className = 'text-tsgreen font-bold text-center mb-2';
@@ -240,15 +262,18 @@ async function claimSubscription() {
             p2.textContent = configMsg;
 
             const button = document.createElement('button');
-            button.className = 'mt-4 w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-2 px-6 rounded transition';
+            button.className = 'mt-4 w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-2 px-6 rounded transition shadow-lg';
             button.textContent = 'Restart Apps & Tunnel';
-            button.onclick = () => { restartTunnel(); switchTab('dashboard'); };
+            button.onclick = () => {
+                restartTunnel();
+                document.getElementById('pending-install-section').classList.add('hidden');
+                activePaymentHash = null;
+                switchTab('dashboard');
+            };
 
+            if (btnInstall) btnInstall.classList.add('hidden'); // Hide the install button now
             invoiceBox.append(h3, p1, p2, button);
         } else {
-            const invoiceBox = document.getElementById('invoice-box');
-            invoiceBox.innerHTML = '';
-
             const h3 = document.createElement('h3');
             h3.className = 'text-red-500 font-bold text-center mb-2';
             h3.textContent = 'Provisioning Error';
@@ -258,8 +283,17 @@ async function claimSubscription() {
             p.textContent = 'Payment was successful, but config provisioning failed.';
 
             invoiceBox.append(h3, p);
+            if (btnInstall) {
+                btnInstall.disabled = false;
+                btnInstall.innerText = "Retry Installation";
+            }
         }
-    } catch (e) { }
+    } catch (e) {
+        if (btnInstall) {
+            btnInstall.disabled = false;
+            btnInstall.innerText = "Retry Installation";
+        }
+    }
 }
 
 async function configureNode() {

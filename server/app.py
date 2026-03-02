@@ -6,14 +6,22 @@ import logging
 from ipaddress import ip_address, ip_network
 from flask import Flask, request, jsonify, send_from_directory, abort
 from werkzeug.utils import secure_filename
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__, static_folder="../web", static_url_path="")
+# Umbrel uses an app-proxy, so request.remote_addr will be 127.0.0.1 unless we use ProxyFix to parse X-Forwarded-For.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_host=1)
 
 TUNNELSATS_API_URL = "https://tunnelsats.com/api/public/v1"
 DATA_DIR = "/data"
 
-# Umbrel internal docker subnet is 10.21.0.0/16 by default.
-ALLOWED_NETWORKS = [ip_network('127.0.0.0/8'), ip_network('10.21.0.0/16')]
+# Allow local loopback and all standard private subnets (RFC 1918) for LAN access
+ALLOWED_NETWORKS = [
+    ip_network('127.0.0.0/8'),
+    ip_network('10.0.0.0/8'),
+    ip_network('172.16.0.0/12'),
+    ip_network('192.168.0.0/16')
+]
 
 @app.before_request
 def restrict_local_api():
@@ -241,7 +249,21 @@ def restore_node():
     lnd_path = "/lightning-data/lnd/tunnelsats.conf"
     if os.path.exists(lnd_path):
         try:
-            os.remove(lnd_path)
+            with open(lnd_path, "r") as f:
+                lines = f.readlines()
+            
+            new_lines = []
+            for line in lines:
+                if line.startswith("externalhosts=") or line.startswith("tor.skip-proxy-for-clearnet-targets="):
+                    if not line.startswith("#"):
+                        new_lines.append(f"#{line}")
+                    else:
+                        new_lines.append(line)
+                else:
+                    new_lines.append(line)
+
+            with open(lnd_path, "w") as f:
+                f.writelines(new_lines)
             lnd_success = True
         except Exception as e:
             app.logger.error(f"Error removing LND config: {e}")
@@ -255,24 +277,23 @@ def restore_node():
             
             new_lines = []
             for line in lines:
-                if not line.startswith("bind-addr=") and not line.startswith("announce-addr=") and not line.startswith("always-use-proxy="):
+                if line.startswith("bind-addr=") or line.startswith("announce-addr=") or line.startswith("always-use-proxy="):
+                    if not line.startswith("#"):
+                        new_lines.append(f"#{line}")
+                    else:
+                        new_lines.append(line)
+                else:
                     new_lines.append(line)
-                    
+            
             with open(cln_path, "w") as f:
                 f.writelines(new_lines)
             cln_success = True
         except Exception as e:
-            app.logger.error(f"Error reverting CLN config: {e}")
+            app.logger.error(f"Error removing CLN config: {e}")
 
     configs_cleaned = False
-    if os.path.exists(DATA_DIR):
-        try:
-            for f in os.listdir(DATA_DIR):
-                if f.endswith(".conf"):
-                    os.remove(os.path.join(DATA_DIR, f))
-            configs_cleaned = True
-        except Exception as e:
-            app.logger.error(f"Error cleaning up old configurations: {e}")
+    # DO NOT delete .conf files in DATA_DIR. 
+    # The user paid for these VPN configs, and removing the App should preserve them as backups.
 
     return jsonify({"lnd": lnd_success, "cln": cln_success, "configs_cleaned": configs_cleaned})
 

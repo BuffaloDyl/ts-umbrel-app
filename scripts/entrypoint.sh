@@ -24,23 +24,40 @@ get_container_ip() {
 LND_IP=""
 CLN_IP=""
 
-echo "Querying Docker API for Lightning Node IPs..."
+# Wait for VPN setup before fetching IPs
+sleep 5
+
+echo "Starting loop to detect LND/CLN IPs..."
 RETRY_COUNT=0
+MAX_WAIT_SECONDS=7200 # 2 hours maximum wait time
+SLEEP_INTERVAL=10
+
 while true; do
-    LND_IP=$(get_container_ip "lightning_lnd_1")
-    CLN_IP=$(get_container_ip "lightning_core-lightning_1")
-    
-    if [ -n "$LND_IP" ] || [ -n "$CLN_IP" ]; then
-        break
-    fi
-    
+  LND_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' lnd_app_proxy_1 2>/dev/null)
+  CLN_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' core-lightning_app_proxy_1 2>/dev/null)
+
+  if [ -n "$LND_IP" ]; then
+    echo "Found LND IP: $LND_IP"
+    break
+  elif [ -n "$CLN_IP" ]; then
+    echo "Found CLN IP: $CLN_IP"
+    break
+  else
     RETRY_COUNT=$((RETRY_COUNT+1))
-    if [ "$RETRY_COUNT" -eq 60 ]; then
-        echo "WARNING: Have been waiting 5 minutes for LND/CLN to initialize... Still waiting indefinitely."
+    TOTAL_WAITED=$((RETRY_COUNT*SLEEP_INTERVAL))
+    
+    if [ $TOTAL_WAITED -ge $MAX_WAIT_SECONDS ]; then
+      echo "TIMEOUT: Could not detect LND or CLN IP after $MAX_WAIT_SECONDS seconds (2 hours)."
+      echo "This may indicate a bloated channel.db compaction or a fatal startup error."
+      echo "Please check your Umbrel node health and try restarting the TunnelSats app once LND/CLN are fully operational."
+      exit 1
     fi
     
-    echo "Waiting for LND or CLN containers to initialize... Retrying in 5 seconds."
-    sleep 5
+    if [ $((RETRY_COUNT % 6)) -eq 0 ]; then
+      echo "Still waiting for LND or CLN containers to start (Waited ${TOTAL_WAITED}s)... Node may be running compactions."
+    fi
+    sleep $SLEEP_INTERVAL
+  fi
 done
 
 echo "Target Node IPs - LND: ${LND_IP:-None}, CLN: ${CLN_IP:-None}"
