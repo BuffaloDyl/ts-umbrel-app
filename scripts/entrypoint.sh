@@ -33,8 +33,8 @@ MAX_WAIT_SECONDS=7200 # 2 hours maximum wait time
 SLEEP_INTERVAL=10
 
 while true; do
-  LND_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' lnd_app_proxy_1 2>/dev/null)
-  CLN_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' core-lightning_app_proxy_1 2>/dev/null)
+  LND_IP=$(get_container_ip "lightning_lnd")
+  CLN_IP=$(get_container_ip "lightning_core-lightning")
 
   if [ -n "$LND_IP" ]; then
     echo "Found LND IP: $LND_IP"
