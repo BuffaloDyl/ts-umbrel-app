@@ -16,9 +16,9 @@
                         sans: ['Inter', 'sans-serif'],
                     },
                     colors: {
-                        tsgreen: '#00d2ff',
-                        tsyellow: '#faca00',
-                        tsgray: '#1f2937',
+                        tsgreen: '#22c55e',
+                        tsyellow: '#facc15',
+                        tsgray: '#0f1115',
                     }
                 }
             }
@@ -31,7 +31,7 @@
         }
 
         .tab-active {
-            border-bottom: 2px solid #00d2ff;
+            border-bottom: 2px solid #facc15;
             color: #ffffff;
             font-weight: 600;
         }
@@ -50,7 +50,7 @@
         <!-- Header -->
         <header class="bg-gray-800/80 p-6 flex justify-between items-center border-b border-gray-700">
             <div class="flex items-center space-x-4">
-                <img src="/logo.png" alt="TunnelSats" class="h-10 w-10 rounded-full shadow-lg">
+                <img src="/img/brand/logo.svg" alt="TunnelSats" class="h-10 w-10 shadow-lg" style="filter: drop-shadow(0 0 8px rgba(250, 204, 21, 0.5));">
                 <h1 class="text-2xl font-bold text-white tracking-wide">TunnelSats</h1>
             </div>
             <div id="statusBadge" class="px-4 py-2 rounded-full font-bold text-sm bg-gray-700 text-gray-300 shadow-inner">
@@ -137,14 +137,14 @@
                             <label class="block text-sm font-medium text-gray-300 mb-1">Duration</label>
                             <select id="buy-duration-select" class="w-full bg-gray-700 border border-gray-600 text-white rounded p-3 focus:ring-tsgreen focus:border-tsgreen">
                                 <option value="1">1 Month</option>
-                                <option value="3">3 Months</option>
-                                <option value="6">6 Months</option>
-                                <option value="12">12 Months</option>
+                                <option value="3">3 Months (10% off)</option>
+                                <option value="6">6 Months (15% off)</option>
+                                <option value="12">12 Months (25% off)</option>
                             </select>
                         </div>
 
                         <div class="mt-6">
-                            <button id="btn-create-buy" onclick="createSub('buy')" class="w-full bg-tsgreen hover:bg-cyan-500 text-gray-900 font-bold py-3 rounded shadow-lg transition">
+                            <button id="btn-create-buy" onclick="createSub('buy')" class="w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-3 rounded shadow-lg transition">
                                 Generate Lightning Invoice
                             </button>
                         </div>
@@ -176,25 +176,20 @@
                             <input id="renew-pubkey" type="text" readonly class="w-full bg-gray-700 border border-gray-600 text-gray-400 rounded p-3 cursor-not-allowed">
                         </div>
 
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-1">Select Server (Must match active config)</label>
-                            <select id="renew-server-select" class="w-full bg-gray-700 border border-gray-600 text-white rounded p-3 focus:ring-tsgreen focus:border-tsgreen">
-                                <option value="">Loading servers...</option>
-                            </select>
-                        </div>
+                        <!-- Removed Renew Server Select as per V2 design -->
 
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-1">Duration to Add</label>
                             <select id="renew-duration-select" class="w-full bg-gray-700 border border-gray-600 text-white rounded p-3 focus:ring-tsgreen focus:border-tsgreen">
                                 <option value="1">1 Month</option>
-                                <option value="3">3 Months</option>
-                                <option value="6">6 Months</option>
-                                <option value="12">12 Months</option>
+                                <option value="3">3 Months (10% off)</option>
+                                <option value="6">6 Months (15% off)</option>
+                                <option value="12">12 Months (25% off)</option>
                             </select>
                         </div>
 
                         <div class="mt-6">
-                            <button id="btn-create-renew" onclick="createSub('renew')" class="w-full bg-tsgreen hover:bg-cyan-500 text-gray-900 font-bold py-3 rounded shadow-lg transition">
+                            <button id="btn-create-renew" onclick="createSub('renew')" class="w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-3 rounded shadow-lg transition">
                                 Generate Renewal Invoice
                             </button>
                         </div>
@@ -221,7 +216,7 @@
                     <h2 class="text-xl font-bold text-white mb-2">Finalize New Installation</h2>
                     <p class="text-sm text-gray-300 mb-4">Your payment was confirmed. Click the button below to provision your VPN config and configure your lightning node.</p>
                     <button onclick="claimSubscription('import')" id="btn-claim-install"
-                        class="w-full bg-tsgreen hover:bg-cyan-500 text-gray-900 font-bold py-3 rounded transition shadow-lg">
+                        class="w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-3 rounded transition shadow-lg">
                         Install Now
                     </button>
                     <!-- claimSubscription will render the result here -->

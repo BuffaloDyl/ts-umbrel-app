@@ -66,21 +66,13 @@ async function fetchServers() {
         const servers = await res.json();
 
         const selBuy = document.getElementById('buy-server-select');
-        const selRenew = document.getElementById('renew-server-select');
-
         selBuy.innerHTML = "";
-        selRenew.innerHTML = "";
 
         servers.forEach(s => {
             let opt1 = document.createElement('option');
             opt1.value = s.id;
             opt1.innerText = `${s.country} - ${s.city} (Port: ${s.wireguardPort})`;
             selBuy.appendChild(opt1);
-
-            let opt2 = document.createElement('option');
-            opt2.value = s.id;
-            opt2.innerText = `${s.country} - ${s.city} (Port: ${s.wireguardPort})`;
-            selRenew.appendChild(opt2);
         });
     } catch (e) { }
 }
@@ -107,13 +99,15 @@ function renderQR(mode, text) {
 
 // 3. Purchase Flow
 async function createSub(mode) {
-    const serverId = document.getElementById(`${mode}-server-select`).value;
     const duration = parseInt(document.getElementById(`${mode}-duration-select`).value);
+    let serverId = null;
+    if (mode === 'buy') {
+        serverId = document.getElementById('buy-server-select').value;
+        if (!serverId) return;
+    }
 
     // Save purchase mode globally for polling
     purchaseMode = mode;
-
-    if (!serverId) return;
 
     // Helper for ui errors
     function displayPurchaseError(msg) {
@@ -141,7 +135,7 @@ async function createSub(mode) {
         if (mode === 'renew') {
             endpoint = '/api/subscription/renew';
             const wgPublicKey = document.getElementById('renew-pubkey').value;
-            payload = { serverId, duration, wgPublicKey };
+            payload = { duration, wgPublicKey };
             if (!wgPublicKey || wgPublicKey === "Not available") {
                 displayPurchaseError("Cannot renew without an active public key from a connected VPN.");
                 document.getElementById(`btn-create-${mode}`).innerText = "Generate Renewal Invoice";
@@ -317,6 +311,13 @@ async function configureNode() {
 async function importConfig() {
     const txt = document.getElementById('config-text').value;
     const msg = document.getElementById('import-msg');
+    const existingConfigs = document.getElementById('txt-configs').innerText;
+
+    if (existingConfigs !== "None Detected" && existingConfigs !== "Loading..." && existingConfigs !== "") {
+        if (!confirm("Warning: You already have a Tunnelsats configuration active. Importing a new config will overwrite it. Do you wish to proceed?")) {
+            return;
+        }
+    }
 
     msg.innerText = "Importing...";
     msg.className = "text-center mt-4 text-sm text-gray-400";

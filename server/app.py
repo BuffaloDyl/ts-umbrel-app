@@ -70,7 +70,11 @@ def proxy_request(method, endpoint, payload=None):
         else:
             return jsonify({"error": "Unsupported method"}), 405
             
-        return (resp.content, resp.status_code, resp.headers.items())
+        excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+        headers = [(name, value) for (name, value) in resp.headers.items()
+                   if name.lower() not in excluded_headers]
+                   
+        return (resp.content, resp.status_code, headers)
     except requests.RequestException as e:
         return jsonify({"error": str(e)}), 500
 
@@ -107,6 +111,12 @@ def claim_subscription():
             if "wireguardConfig" in data and "server" in data:
                 # Save config
                 server_id = data["server"].get("id", "unknown")
+                if os.path.exists(DATA_DIR):
+                    for f in os.listdir(DATA_DIR):
+                        if f.endswith(".conf"):
+                            try: os.remove(os.path.join(DATA_DIR, f))
+                            except: pass
+                            
                 config_path = os.path.join(DATA_DIR, f"tunnelsats-{server_id}.conf")
                 with open(config_path, "w") as f:
                     f.write(data["wireguardConfig"])
@@ -143,15 +153,15 @@ def local_status():
             if f.endswith(".conf"):
                 configs.append(f)
 
-    # Check for LND and CLN IPs via our entrypoint logs or docker 
+    # Check for LND and CLN IPs via docker socket
     lnd_ip = ""
     cln_ip = ""
     try:
-        # We can read the ip file we might dump from entrypoint to /tmp or just exec docker inspect if socket available
         if os.path.exists("/var/run/docker.sock"):
-            lnd_out = subprocess.check_output(["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "lightning_lnd_1"], stderr=subprocess.DEVNULL)
+            # Use dynamic filters to find the LND and CLN containers
+            lnd_out = subprocess.check_output("docker ps -q --filter 'name=lnd|lightningd' | grep -v 'core-lightning' | head -n 1 | xargs -r docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'", shell=True, stderr=subprocess.DEVNULL)
             lnd_ip = lnd_out.decode().strip()
-            cln_out = subprocess.check_output(["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "lightning_core-lightning_1"], stderr=subprocess.DEVNULL)
+            cln_out = subprocess.check_output("docker ps -q --filter 'name=cln|lightning' | grep -v 'lnd' | head -n 1 | xargs -r docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'", shell=True, stderr=subprocess.DEVNULL)
             cln_ip = cln_out.decode().strip()
     except Exception as e:
         app.logger.error(f"Failed to fetch local status info: {e}")
@@ -185,6 +195,11 @@ def upload_config():
     try:
         if not os.path.exists(DATA_DIR):
             os.makedirs(DATA_DIR)
+        else:
+            for f in os.listdir(DATA_DIR):
+                if f.endswith(".conf"):
+                    try: os.remove(os.path.join(DATA_DIR, f))
+                    except: pass
             
         config_path = os.path.join(DATA_DIR, "tunnelsats-imported.conf")
         with open(config_path, "w") as f:
