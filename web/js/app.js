@@ -10,16 +10,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // UI Routing
 function switchTab(tabId) {
-    document.querySelectorAll('main > section').forEach(el => el.classList.add('hidden'));
+    document.querySelectorAll('main section').forEach(el => el.classList.add('hidden'));
     document.querySelectorAll('nav > button').forEach(el => {
-        el.classList.remove('tab-active', 'font-bold');
-        el.classList.add('text-gray-400');
+        el.classList.remove('nav-active', 'bg-gray-800', 'text-white', 'border-tsgreen');
+        el.classList.add('text-gray-400', 'border-transparent');
     });
 
     document.getElementById(`view-${tabId}`).classList.remove('hidden');
-    const btn = document.getElementById(`tab-${tabId}`);
-    btn.classList.add('tab-active');
-    btn.classList.remove('text-gray-400');
+    const btn = document.getElementById(`nav-${tabId}`);
+    btn.classList.add('nav-active', 'bg-gray-800', 'text-white', 'border-tsgreen');
+    btn.classList.remove('text-gray-400', 'border-transparent');
 }
 
 // 1. Fetch Local Status
@@ -54,6 +54,25 @@ async function fetchStatus() {
         document.getElementById('txt-lnd-ip').innerText = data.lnd_ip || "Not Detected";
         document.getElementById('txt-cln-ip').innerText = data.cln_ip || "Not Detected";
 
+        if (data.version) {
+            document.getElementById('app-version').innerText = data.version;
+        }
+
+        // Update Dashboard Banner
+        const bannerTitle = document.getElementById('dashboard-banner-title');
+        const bannerText = document.getElementById('dashboard-banner-text');
+        const bannerDots = document.getElementById('dashboard-banner-dots');
+
+        if (data.wg_status === 'Connected') {
+            bannerTitle.innerText = "Network Layer Active";
+            bannerText.innerText = "Secure WireGuard tunneling provided by Tunnelsats. Your Lightning P2P traffic is now encrypted and routed through our private global exit nodes.";
+            bannerDots.classList.remove('hidden');
+        } else {
+            bannerTitle.innerText = "Hybrid Lightning Connectivity";
+            bannerText.innerText = "TunnelSats enables privacy-preserving clearnet connectivity for your node. Keep your home IP hidden while benefiting from faster, more reliable Lightning routing.";
+            bannerDots.classList.add('hidden');
+        }
+
     } catch (e) {
         console.error("Failed to fetch status", e);
     }
@@ -65,15 +84,25 @@ async function fetchServers() {
         const res = await fetch('/api/servers');
         const servers = await res.json();
 
-        const selBuy = document.getElementById('buy-server-select');
-        selBuy.innerHTML = "";
+        const selBuyList = document.getElementById('buy-server-list');
+        selBuyList.innerHTML = "";
 
         servers.forEach(s => {
-            let opt1 = document.createElement('option');
-            opt1.value = s.id;
-            opt1.innerText = `${s.country} - ${s.city} (Port: ${s.wireguardPort})`;
-            selBuy.appendChild(opt1);
+            let btn = document.createElement('button');
+            btn.type = 'button';
+            const label = `${s.country} - ${s.city} (Port: ${s.wireguardPort})`;
+            btn.setAttribute('onclick', `selectOption('buy-server', '${s.id}', '${label}')`);
+            btn.className = 'w-full text-left px-4 py-3 text-white hover:bg-gray-700 transition-colors border-b border-gray-700/50 hover:pl-6 block';
+            btn.innerText = label;
+            selBuyList.appendChild(btn);
         });
+
+        if (servers.length > 0) {
+            const firstLabel = `${servers[0].country} - ${servers[0].city} (Port: ${servers[0].wireguardPort})`;
+            selectOption('buy-server', servers[0].id, firstLabel);
+        } else {
+            document.getElementById('buy-server-label').innerText = "No servers available";
+        }
     } catch (e) { }
 }
 
@@ -394,3 +423,59 @@ async function restoreNode() {
         btn.innerText = "Restore Node Networking";
     }
 }
+
+// Custom Dropdown Logic
+let openDropdown = null;
+
+function toggleDropdown(id) {
+    const list = document.getElementById(`${id}-list`);
+    const caret = document.getElementById(`${id}-caret`);
+
+    if (openDropdown && openDropdown !== id) {
+        closeDropdown(openDropdown);
+    }
+
+    if (list.classList.contains('hidden')) {
+        list.classList.remove('hidden');
+        setTimeout(() => {
+            list.classList.remove('scale-95', 'opacity-0');
+            caret.classList.add('rotate-180');
+        }, 10);
+        openDropdown = id;
+    } else {
+        closeDropdown(id);
+    }
+}
+
+function closeDropdown(id) {
+    const list = document.getElementById(`${id}-list`);
+    const caret = document.getElementById(`${id}-caret`);
+    if (!list || !caret) return;
+
+    list.classList.add('scale-95', 'opacity-0');
+    caret.classList.remove('rotate-180');
+    setTimeout(() => {
+        list.classList.add('hidden');
+    }, 200);
+    if (openDropdown === id) openDropdown = null;
+}
+
+function selectOption(dropdownId, value, label) {
+    const selectEl = document.getElementById(`${dropdownId}-select`);
+    const labelEl = document.getElementById(`${dropdownId}-label`);
+    if (selectEl) selectEl.value = value;
+    if (labelEl) {
+        labelEl.innerText = label;
+        labelEl.classList.replace('text-gray-400', 'text-white');
+    }
+    closeDropdown(dropdownId);
+}
+
+document.addEventListener('click', (e) => {
+    if (openDropdown) {
+        const container = document.getElementById(`${openDropdown}-dropdown-container`);
+        if (container && !container.contains(e.target)) {
+            closeDropdown(openDropdown);
+        }
+    }
+});

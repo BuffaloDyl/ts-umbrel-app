@@ -34,7 +34,8 @@ describe('UI Routing and Initialization', () => {
         window.switchTab('buy');
         expect(document.getElementById('view-buy').classList.contains('hidden')).toBe(false);
         expect(document.getElementById('view-dashboard').classList.contains('hidden')).toBe(true);
-        expect(document.getElementById('tab-buy').classList.contains('tab-active')).toBe(true);
+        expect(document.getElementById('nav-buy').classList.contains('nav-active')).toBe(true);
+        expect(document.getElementById('nav-dashboard').classList.contains('nav-active')).toBe(false);
     });
 
     test('fetchStatus updates DOM elements', async () => {

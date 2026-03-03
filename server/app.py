@@ -3,6 +3,7 @@ import time
 import subprocess
 import requests
 import logging
+import yaml
 from ipaddress import ip_address, ip_network
 from flask import Flask, request, jsonify, send_from_directory, abort
 from werkzeug.utils import secure_filename
@@ -166,12 +167,24 @@ def local_status():
     except Exception as e:
         app.logger.error(f"Failed to fetch local status info: {e}")
 
+    # Get version from manifest
+    version = "v3.0.0" # Default
+    try:
+        manifest_path = os.path.join(os.path.dirname(__file__), "..", "umbrel-app.yml")
+        if os.path.exists(manifest_path):
+            with open(manifest_path, 'r') as f:
+                manifest = yaml.safe_load(f)
+                version = f"v{manifest.get('version', '3.0.0')}"
+    except Exception:
+        pass
+
     return jsonify({
         "wg_status": wg_status,
         "wg_pubkey": wg_pubkey,
         "configs_found": configs,
         "lnd_ip": lnd_ip,
-        "cln_ip": cln_ip
+        "cln_ip": cln_ip,
+        "version": version
     })
 
 @app.route("/api/local/upload-config", methods=["POST"])
