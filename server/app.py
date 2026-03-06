@@ -106,7 +106,8 @@ def comment_out_config_lines(path, prefixes):
     try:
         with open(path, "r", encoding="utf-8") as conf_fp:
             lines = conf_fp.readlines()
-    except Exception:
+    except (IOError, OSError) as exc:
+        app.logger.warning(f"Error reading {path} for restore: {exc}")
         return False
 
     changed = False
@@ -127,7 +128,8 @@ def comment_out_config_lines(path, prefixes):
         try:
             with open(path, "w", encoding="utf-8") as conf_fp:
                 conf_fp.writelines(updated_lines)
-        except Exception:
+        except (IOError, OSError) as exc:
+            app.logger.warning(f"Error writing {path} for restore: {exc}")
             return False
 
     return True
@@ -179,7 +181,8 @@ def docker_api(path):
             timeout=5,
         )
         return json.loads(out.decode("utf-8"))
-    except Exception:
+    except (subprocess.SubprocessError, json.JSONDecodeError, FileNotFoundError, TimeoutError, OSError) as exc:
+        app.logger.warning(f"Docker API call failed for path {path}: {exc}")
         return None
 
 

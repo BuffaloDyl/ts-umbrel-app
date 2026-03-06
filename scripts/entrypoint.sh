@@ -117,7 +117,12 @@ docker_api_with_code() {
 }
 
 read_wg_config_path() {
-    find /data -name "tunnelsats*.conf" -type f | head -n 1
+    local -a files=()
+    mapfile -t files < <(find /data -name "tunnelsats*.conf" -type f | sort)
+    if [ "${#files[@]}" -gt 1 ]; then
+        log WARN "Multiple tunnelsats*.conf files found, using first: ${files[0]}"
+    fi
+    echo "${files[0]:-}"
 }
 
 extract_forwarding_port() {
