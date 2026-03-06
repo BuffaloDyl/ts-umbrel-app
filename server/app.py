@@ -47,6 +47,15 @@ def client_is_allowed(remote_addr):
     return any(remote_ip in subnet for subnet in ALLOWED_NETWORKS)
 
 
+def is_loopback_ip(remote_addr):
+    if not remote_addr:
+        return False
+    try:
+        return ip_address(remote_addr).is_loopback
+    except ValueError:
+        return False
+
+
 def normalize_version(raw_version):
     version_text = str(raw_version or "").strip()
     if not version_text:
@@ -151,9 +160,13 @@ def _parse_config_comments(config_text):
 
 
 def _write_file_secure(path, content):
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fp:
+    parent_dir = os.path.dirname(path) or "."
+    os.makedirs(parent_dir, exist_ok=True)
+    tmp_path = os.path.join(parent_dir, f".{os.path.basename(path)}.tmp.{uuid.uuid4().hex}")
+    with open(tmp_path, "w", encoding="utf-8") as fp:
         fp.write(content)
+    os.chmod(tmp_path, 0o600)
+    os.replace(tmp_path, path)
 
 
 def docker_api(path):
@@ -171,7 +184,7 @@ def docker_api(path):
 
 
 def container_ip_by_match(pattern):
-    containers = docker_api("/containers/json?all=1")
+    containers = docker_api("/containers/json?all=0")
     if not containers:
         return ""
 
@@ -273,7 +286,17 @@ def read_legacy_reconcile_result():
 @app.before_request
 def restrict_local_api():
     if request.path.startswith("/api/local") or request.path == "/api/subscription/renew":
-        if not client_is_allowed(request.remote_addr):
+        proxyfix_orig = request.environ.get("werkzeug.proxy_fix.orig", {}) or {}
+        direct_remote_addr = proxyfix_orig.get("REMOTE_ADDR") or request.remote_addr
+
+        # Trust X-Forwarded-For only when the immediate peer is loopback (local reverse proxy).
+        # Direct clients can otherwise spoof forwarded headers to bypass local-network checks.
+        if is_loopback_ip(direct_remote_addr):
+            effective_remote_addr = request.remote_addr
+        else:
+            effective_remote_addr = direct_remote_addr
+
+        if not client_is_allowed(effective_remote_addr):
             abort(403)
 
 

@@ -67,6 +67,10 @@ trigger_reconcile_and_wait() {
 }
 
 setup_stack() {
+  if [ ! -f "${COMPOSE_TEST_FILE}" ]; then
+    echo "Missing ${COMPOSE_TEST_FILE}; cannot run e2e scenarios." >&2
+    exit 1
+  fi
   log "Starting test stack"
   docker compose -f "${COMPOSE_TEST_FILE}" up -d --build
   wait_for_status 120

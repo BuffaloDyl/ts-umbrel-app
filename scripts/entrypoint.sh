@@ -338,10 +338,25 @@ ensure_policy_routing() {
         return 1
     fi
 
-    if ! ip route replace 10.9.0.0/24 dev "${WG_IFACE}" table 51820 >/dev/null 2>&1; then
-        LAST_ERROR="Failed to set policy route for WireGuard tunnel network"
+    # Remove legacy hardcoded route from older releases (if present).
+    ip route del 10.9.0.0/24 table 51820 >/dev/null 2>&1 || true
+
+    local wg_cidrs
+    wg_cidrs="$(ip -4 addr show dev "${WG_IFACE}" | awk '/inet / {print $2}' || true)"
+    if [ -z "${wg_cidrs}" ]; then
+        LAST_ERROR="Failed to discover WireGuard interface addresses on ${WG_IFACE}"
         return 1
     fi
+
+    while IFS= read -r cidr; do
+        [ -n "${cidr}" ] || continue
+        if ! ip route replace "${cidr}" dev "${WG_IFACE}" table 51820 >/dev/null 2>&1; then
+            LAST_ERROR="Failed to set policy route for WireGuard network ${cidr}"
+            return 1
+        fi
+    done <<EOF_WG_CIDRS
+${wg_cidrs}
+EOF_WG_CIDRS
 
     echo "${changed}"
 }
@@ -559,10 +574,10 @@ reconcile_once() {
 
 cleanup() {
     log INFO "Received SIGTERM. Stopping ${APP_NAME}."
-    cleanup_dataplane
     if [ -n "${API_PID}" ]; then
         kill "${API_PID}" >/dev/null 2>&1 || true
     fi
+    cleanup_dataplane
     exit 0
 }
 

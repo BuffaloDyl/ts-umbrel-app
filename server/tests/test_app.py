@@ -307,6 +307,14 @@ class TestDataplaneAndRegressionFixes:
         })
         assert res.status_code == 403
 
+    def test_direct_client_cannot_spoof_forwarded_private_ip(self, client):
+        # Direct non-loopback caller should be validated against the direct peer IP, not spoofed X-Forwarded-For.
+        res = client.get('/api/local/status', environ_base={
+            'REMOTE_ADDR': '203.0.113.9',
+            'HTTP_X_FORWARDED_FOR': '10.0.0.2'
+        })
+        assert res.status_code == 403
+
     def test_upload_config_renames_old_conf_but_not_imported_conf(self, client, data_dir):
         old_conf = data_dir / 'tunnelsats-old.conf'
         old_conf.write_text('[Interface]\nPrivateKey=old\n')
@@ -339,6 +347,13 @@ class TestDataplaneAndRegressionFixes:
         assert data['docker_network']['name'] == 'docker-tunnelsats'
         assert data['rules_synced'] is False
         assert data['last_error'] is None
+
+    @patch('app.docker_api')
+    def test_status_queries_only_running_containers_for_ips(self, mock_docker_api, client):
+        mock_docker_api.return_value = []
+        res = client.get('/api/local/status')
+        assert res.status_code == 200
+        assert mock_docker_api.call_args_list[0].args[0] == '/containers/json?all=0'
 
     def test_reconcile_endpoint_creates_trigger_and_status_transitions(self, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
