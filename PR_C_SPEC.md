@@ -39,7 +39,7 @@ This endpoint tells the backend to modify `lnd.conf` or CLN config to utilize th
 ```json
 {
   "success": false,
-  "error": "Failed to modify LND config or CLN is not currently supported."
+  "error": "Failed to modify LND/CLN config."
 }
 ```
 
@@ -62,5 +62,13 @@ This endpoint disables the VPN modifications in the node configurations, safe-gu
 
 ## Developer Notes
 - `POST /api/local/restore-node` is already implemented and working in backend.
-- `POST /api/local/configure-node` is stubbed in `server/app.py` returning `501 Not Implemented`. You need to replace this stub with the logic to read `tunnelsats-meta.json` for `vpnPort` and `serverDomain`, open `/lightning-data/lnd/tunnelsats.conf`, and inject `externalhosts=<domain>:<port>`. 
+- `POST /api/local/configure-node` is stubbed in `server/app.py` returning `501 Not Implemented`. You need to replace this stub with the logic to read `tunnelsats-meta.json` for `vpnPort` and `serverDomain`.
+  - **For LND**: Open `/lightning-data/lnd/tunnelsats.conf` (which is included by `lnd.conf`) and inject `externalhosts=<domain>:<port>`.
+  - **For CLN**: Open `/lightning-data/cln/config` and append:
+    ```ini
+    always-use-proxy=false
+    announce-addr=<domain>:<port>
+    ```
+    *(Note: TunnelSats entrypoint handles the port `9735` DNAT mapping natively via the Docker bridge. There is NO need for the user to edit their host `exports.sh` or `docker-compose.yml` with `sudo`, so please ignore any older CLI guides that mention this).*
+- After modifying the configs, use the Docker API via `/var/run/docker.sock` to hit `POST /containers/{id}/restart` to gracefully restart the respective lightning container.
 - Ensure you write Python and JS unit tests before marking ready for review.
