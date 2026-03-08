@@ -100,7 +100,6 @@ function switchTab(tabId) {
         clearInterval(pollInterval);
         pollInterval = null;
     }
-    activePaymentHash = null;
     ['buy', 'renew'].forEach(mode => {
         const box = document.getElementById(`invoice-box-${mode}`);
         if (box) box.classList.add('hidden');
@@ -421,6 +420,8 @@ async function pollPayment() {
 
                 invoiceBox.append(celebrationSvg, h3, p, button);
             } else {
+                // Renewals don't need claim/provisioning, so clear active hash after payment confirmation.
+                activePaymentHash = null;
                 const h3 = document.createElement('h3');
                 h3.className = 'text-tsgreen font-bold text-center mb-2';
                 h3.textContent = 'Renewal Successful!';
@@ -582,46 +583,126 @@ function resetReconcileBtn() {
 
 // NOTE: configureNode() and restoreNode() moved to PR #3/PR #4 (dataplane + API integration).
 
+function confirmOverwriteImport() {
+    return new Promise((resolve) => {
+        const existingModal = document.getElementById('import-overwrite-modal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+
+        const overlay = document.createElement('div');
+        overlay.id = 'import-overwrite-modal';
+        overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4';
+
+        const panel = document.createElement('div');
+        panel.className = 'w-full max-w-md rounded-xl border border-gray-700 bg-gray-900 p-6 shadow-2xl';
+
+        const title = document.createElement('h3');
+        title.className = 'text-lg font-bold text-white';
+        title.innerText = 'Replace Existing Config?';
+
+        const body = document.createElement('p');
+        body.className = 'mt-3 text-sm text-gray-300';
+        body.innerText = 'A TunnelSats configuration already exists on this node. Importing will replace the active config.';
+
+        const actions = document.createElement('div');
+        actions.className = 'mt-6 flex justify-end gap-3';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'rounded-lg border border-gray-600 px-4 py-2 text-sm font-semibold text-gray-200 hover:bg-gray-800';
+        cancelBtn.innerText = 'Cancel';
+
+        const confirmBtn = document.createElement('button');
+        confirmBtn.type = 'button';
+        confirmBtn.className = 'rounded-lg bg-tsyellow px-4 py-2 text-sm font-bold text-black hover:bg-yellow-400';
+        confirmBtn.innerText = 'Import Anyway';
+
+        actions.append(cancelBtn, confirmBtn);
+        panel.append(title, body, actions);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+
+        let settled = false;
+        const complete = (choice) => {
+            if (settled) return;
+            settled = true;
+            overlay.remove();
+            resolve(choice);
+        };
+
+        cancelBtn.addEventListener('click', () => complete(false));
+        confirmBtn.addEventListener('click', () => complete(true));
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) {
+                complete(false);
+            }
+        });
+
+        confirmBtn.focus();
+    });
+}
+
 // 4. Import Config
 async function importConfig() {
     const txt = document.getElementById('config-text').value;
+    const config = (txt || '').trim();
     const msg = document.getElementById('import-msg');
     const existingConfigs = document.getElementById('txt-configs').innerText;
 
+    function setImportMessage(text, tone) {
+        msg.innerText = text;
+        if (tone === 'success') {
+            msg.className = "text-center mt-4 text-sm font-bold text-tsgreen";
+            return;
+        }
+        if (tone === 'error') {
+            msg.className = "text-center mt-4 text-sm font-bold text-red-500";
+            return;
+        }
+        msg.className = "text-center mt-4 text-sm text-gray-400";
+    }
+
     if (existingConfigs !== "None Detected" && existingConfigs !== "Loading..." && existingConfigs !== "") {
-        if (!confirm("Warning: You already have a Tunnelsats configuration active. Importing a new config will overwrite it. Do you wish to proceed?")) {
+        const shouldProceed = await confirmOverwriteImport();
+        if (!shouldProceed) {
+            setImportMessage("Import cancelled.", 'info');
             return;
         }
     }
 
-    msg.innerText = "Importing...";
-    msg.className = "text-center mt-4 text-sm text-gray-400";
+    if (!config) {
+        setImportMessage("Please paste a WireGuard config before importing.", 'error');
+        return;
+    }
+
+    if (!/\[Interface\]/i.test(config) || !/\[Peer\]/i.test(config)) {
+        setImportMessage("Invalid WireGuard configuration format. Missing [Interface] or [Peer] block.", 'error');
+        return;
+    }
+
+    if (!/^\s*PrivateKey\s*=\s*.+$/mi.test(config)) {
+        setImportMessage("Invalid WireGuard configuration format. Missing Interface PrivateKey.", 'error');
+        return;
+    }
+
+    setImportMessage("Importing...", 'info');
 
     try {
-        const formData = new FormData();
-        formData.append('config_text', txt);
-
         const res = await fetch('/api/local/upload-config', {
             method: 'POST',
-            body: formData
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config })
         });
 
         const data = await res.json();
-        if (res.ok) {
-            const configMsg = "Node configuration will be available after dataplane setup.";
-            msg.innerText = `Config imported successfully! ${configMsg}`;
-            msg.className = "text-center mt-4 text-sm font-bold text-tsgreen";
-            setTimeout(() => {
-                restartTunnel();
-                switchTab('dashboard');
-            }, 3000);
+        if (res.ok && data.success !== false) {
+            setImportMessage(data.message || "Configuration saved and parsed.", 'success');
         } else {
-            msg.innerText = data.error || "Import failed.";
-            msg.className = "text-center mt-4 text-sm font-bold text-red-500";
+            setImportMessage(data.error || "Import failed.", 'error');
         }
     } catch (e) {
-        msg.innerText = e.message;
-        msg.className = "text-center mt-4 text-sm font-bold text-red-500";
+        setImportMessage(e.message, 'error');
     }
 }
 

@@ -61,7 +61,7 @@ describe('UI Routing and Initialization', () => {
         expect(document.getElementById('txt-wg-status').innerText).toBe('Connected');
         expect(document.getElementById('txt-pubkey').innerText).toBe('testpubkey123');
         expect(document.getElementById('txt-target').innerText).toBe('lightning_lnd_1 (10.21.21.6)');
-        expect(document.getElementById('txt-forwarding').querySelector('span').innerText).toBe(9735);
+        expect(String(document.getElementById('txt-forwarding').querySelector('span').innerText)).toBe('9735');
         expect(document.getElementById('badge-rules').innerText).toBe('Synced');
         expect(document.getElementById('btn-reconcile').classList.contains('hidden')).toBe(false);
         expect(document.getElementById('txt-reconcile').innerText).not.toBe('Never');
@@ -155,7 +155,6 @@ describe('Phase 1: pollPayment detects lowercase paid', () => {
 
     test('recognizes "paid" (lowercase) status and clears poll', async () => {
         // Ensure the purchase mode view is visible so polling doesn't abort
-        // This MUST be called before setting activePaymentHash because switchTab clears it
         window.switchTab('buy');
 
         // Reset state explicitly
@@ -183,6 +182,55 @@ describe('Phase 1: pollPayment detects lowercase paid', () => {
         // Check that old content is replaced (payment-received UI renders)
         expect(invoiceBox.innerHTML).not.toContain('Waiting...');
         expect(invoiceBox.textContent).toContain('Payment Received');
+    });
+
+    test('buy paid flow preserves paymentHash into import claim', async () => {
+        window.switchTab('buy');
+        window.activePaymentHash = 'buy-hash-123';
+        window.purchaseMode = 'buy';
+        if (window.pollInterval) clearInterval(window.pollInterval);
+
+        const invoiceBox = document.getElementById('invoice-box-buy');
+        invoiceBox.classList.remove('hidden');
+        invoiceBox.innerHTML = '<p>Waiting...</p>';
+
+        global.fetch = jest.fn((url) => {
+            if (url === '/api/subscription/buy-hash-123') {
+                return Promise.resolve({
+                    json: () => Promise.resolve({ status: 'paid' }),
+                    ok: true
+                });
+            }
+            if (url === '/api/subscription/claim') {
+                return Promise.resolve({
+                    json: () => Promise.resolve({ success: true }),
+                    ok: true
+                });
+            }
+            return Promise.resolve({ json: () => Promise.resolve({}), ok: true });
+        });
+
+        await window.pollPayment();
+
+        const proceedBtn = Array.from(invoiceBox.querySelectorAll('button'))
+            .find((btn) => btn.textContent.includes('Proceed to Installation'));
+        expect(proceedBtn).toBeTruthy();
+        proceedBtn.click();
+
+        expect(window.activePaymentHash).toBe('buy-hash-123');
+        expect(document.getElementById('view-import').classList.contains('hidden')).toBe(false);
+
+        global.fetch.mockClear();
+        await window.claimSubscription('import');
+
+        expect(global.fetch).toHaveBeenCalledWith(
+            '/api/subscription/claim',
+            expect.objectContaining({
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ paymentHash: 'buy-hash-123', referralCode: null })
+            })
+        );
     });
 });
 
@@ -305,5 +353,160 @@ describe('Phase 2: Renew Flow', () => {
         const bolt11 = document.getElementById('invoice-bolt11-renew');
         expect(bolt11.value).toBe('lnbcrenewtest');
         expect(window.activePaymentHash).toBe('renew-hash-123');
+    });
+});
+
+describe('Phase 3a: Import Config', () => {
+    beforeEach(() => {
+        setupDOM();
+        global.fetch = jest.fn((url) => {
+            if (url === '/api/local/status') {
+                return Promise.resolve({
+                    json: () => Promise.resolve({
+                        wg_status: 'Disconnected', wg_pubkey: '', configs_found: [], version: 'v3.0.0'
+                    }),
+                    ok: true
+                });
+            }
+            if (url === '/api/servers') {
+                return Promise.resolve({
+                    json: () => Promise.resolve({ servers: [] }),
+                    ok: true
+                });
+            }
+            if (url === '/api/local/upload-config') {
+                return Promise.resolve({
+                    json: () => Promise.resolve({
+                        success: true,
+                        message: 'Configuration saved and parsed.',
+                        meta: { serverId: 'de2' }
+                    }),
+                    ok: true
+                });
+            }
+            return Promise.resolve({ json: () => Promise.resolve({}), ok: true });
+        });
+        evalScript();
+    });
+
+    afterEach(() => { jest.restoreAllMocks(); });
+
+    test('pre-validation rejects empty import payload', async () => {
+        document.getElementById('config-text').value = '   ';
+        document.getElementById('txt-configs').innerText = 'None Detected';
+        global.fetch.mockClear();
+
+        await window.importConfig();
+
+        const msg = document.getElementById('import-msg').innerText;
+        expect(msg).toContain('Please paste a WireGuard config');
+        expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    test('pre-validation rejects config missing [Peer] block', async () => {
+        document.getElementById('config-text').value = '[Interface]\nPrivateKey = abc\n';
+        document.getElementById('txt-configs').innerText = 'None Detected';
+        global.fetch.mockClear();
+
+        await window.importConfig();
+
+        const msg = document.getElementById('import-msg').innerText;
+        expect(msg).toContain('Missing [Interface] or [Peer] block');
+        expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    test('import sends JSON payload and renders success message', async () => {
+        const config = '[Interface]\nPrivateKey = abc\n\n[Peer]\nPublicKey = def\nEndpoint = de2.tunnelsats.com:51820\n';
+        const expectedConfig = config.trim();
+        document.getElementById('config-text').value = config;
+        document.getElementById('txt-configs').innerText = 'None Detected';
+        global.fetch.mockClear();
+
+        await window.importConfig();
+
+        expect(global.fetch).toHaveBeenCalledWith(
+            '/api/local/upload-config',
+            expect.objectContaining({
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config: expectedConfig })
+            })
+        );
+        const msg = document.getElementById('import-msg').innerText;
+        expect(msg).toContain('Configuration saved and parsed.');
+    });
+
+    test('existing config cancel keeps import local and does not call backend', async () => {
+        const config = '[Interface]\nPrivateKey = abc\n\n[Peer]\nPublicKey = def\n';
+        document.getElementById('config-text').value = config;
+        document.getElementById('txt-configs').innerText = 'tunnelsats.conf';
+        global.fetch.mockClear();
+
+        const importPromise = window.importConfig();
+        const modal = document.getElementById('import-overwrite-modal');
+        expect(modal).toBeTruthy();
+
+        const cancelBtn = Array.from(modal.querySelectorAll('button')).find((btn) => btn.innerText === 'Cancel');
+        cancelBtn.click();
+        await importPromise;
+
+        expect(document.getElementById('import-overwrite-modal')).toBeNull();
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(document.getElementById('import-msg').innerText).toContain('Import cancelled.');
+    });
+
+    test('existing config confirm proceeds with upload request', async () => {
+        const config = '[Interface]\nPrivateKey = abc\n\n[Peer]\nPublicKey = def\nEndpoint = de2.tunnelsats.com:51820\n';
+        const expectedConfig = config.trim();
+        document.getElementById('config-text').value = config;
+        document.getElementById('txt-configs').innerText = 'tunnelsats.conf';
+        global.fetch.mockClear();
+
+        const importPromise = window.importConfig();
+        const modal = document.getElementById('import-overwrite-modal');
+        expect(modal).toBeTruthy();
+
+        const confirmBtn = Array.from(modal.querySelectorAll('button')).find((btn) => btn.innerText === 'Import Anyway');
+        confirmBtn.click();
+        await importPromise;
+
+        expect(document.getElementById('import-overwrite-modal')).toBeNull();
+        expect(global.fetch).toHaveBeenCalledWith(
+            '/api/local/upload-config',
+            expect.objectContaining({
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config: expectedConfig })
+            })
+        );
+    });
+
+    test('import renders backend error message', async () => {
+        global.fetch = jest.fn((url) => {
+            if (url === '/api/local/upload-config') {
+                return Promise.resolve({
+                    json: () => Promise.resolve({
+                        success: false,
+                        error: 'Invalid WireGuard configuration format. Missing [Interface] or [Peer] block.'
+                    }),
+                    ok: false
+                });
+            }
+            return Promise.resolve({
+                json: () => Promise.resolve({
+                    wg_status: 'Disconnected', wg_pubkey: '', configs_found: [], version: 'v3.0.0', servers: []
+                }),
+                ok: true
+            });
+        });
+
+        const config = '[Interface]\nPrivateKey = abc\n\n[Peer]\nPublicKey = def\n';
+        document.getElementById('config-text').value = config;
+        document.getElementById('txt-configs').innerText = 'None Detected';
+
+        await window.importConfig();
+
+        const msg = document.getElementById('import-msg').innerText;
+        expect(msg).toContain('Invalid WireGuard configuration format');
     });
 });
