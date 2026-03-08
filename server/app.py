@@ -212,6 +212,41 @@ def _extract_interface_private_key(config_text):
     return ""
 
 
+def _ensure_peer_persistent_keepalive(config_text, keepalive=25):
+    lines = config_text.splitlines()
+    if not lines:
+        return config_text
+
+    updated_lines = []
+    in_peer = False
+    peer_has_keepalive = False
+
+    for line in lines:
+        stripped = line.strip()
+        section_match = re.match(r"^\[([^\]]+)\]\s*$", stripped)
+        if section_match:
+            if in_peer and not peer_has_keepalive:
+                updated_lines.append(f"PersistentKeepalive = {keepalive}")
+
+            in_peer = section_match.group(1).strip().lower() == "peer"
+            peer_has_keepalive = False
+            updated_lines.append(line)
+            continue
+
+        if in_peer and re.match(r"^PersistentKeepalive\s*=", stripped, flags=re.IGNORECASE):
+            peer_has_keepalive = True
+
+        updated_lines.append(line)
+
+    if in_peer and not peer_has_keepalive:
+        updated_lines.append(f"PersistentKeepalive = {keepalive}")
+
+    normalized = "\n".join(updated_lines)
+    if config_text.endswith("\n"):
+        normalized += "\n"
+    return normalized
+
+
 def _derive_wg_public_key(private_key):
     try:
         result = subprocess.run(
@@ -596,6 +631,8 @@ def upload_config():
     wg_public_key = _derive_wg_public_key(private_key)
     if not wg_public_key:
         return jsonify({"success": False, "error": "Unable to derive public key from provided PrivateKey."}), 400
+
+    config_text = _ensure_peer_persistent_keepalive(config_text, keepalive=25)
 
     parsed = _parse_config_comments(config_text)
     server_domain = parsed.get("serverDomain", "")

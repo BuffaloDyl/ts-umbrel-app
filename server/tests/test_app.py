@@ -344,6 +344,7 @@ class TestDataplaneAndRegressionFixes:
             "AllowedIPs = 0.0.0.0/0\n"
             "Endpoint = de2.tunnelsats.com:51820\n"
         )
+        expected_saved_config = config_text + "PersistentKeepalive = 25\n"
 
         res = client.post('/api/local/upload-config', json={"config": config_text})
         assert res.status_code == 200
@@ -358,7 +359,7 @@ class TestDataplaneAndRegressionFixes:
         assert os.path.exists(str(old_conf) + '.bak')
         assert not os.path.exists(old_conf)
         assert os.path.exists(str(target_conf) + '.bak')
-        assert target_conf.read_text() == config_text
+        assert target_conf.read_text() == expected_saved_config
 
         meta_path = data_dir / 'tunnelsats-meta.json'
         with open(meta_path, 'r') as fp:
@@ -375,6 +376,29 @@ class TestDataplaneAndRegressionFixes:
             capture_output=True,
             check=True,
         )
+
+    @patch('app.subprocess.run')
+    def test_upload_config_does_not_duplicate_existing_keepalive(self, mock_run, client, data_dir):
+        mock_proc = MagicMock()
+        mock_proc.stdout = 'derivedPubKeyBase64==\n'
+        mock_proc.returncode = 0
+        mock_run.return_value = mock_proc
+
+        config_text = (
+            "[Interface]\n"
+            "PrivateKey = clientPrivateKeyBase64==\n"
+            "\n"
+            "[Peer]\n"
+            "PublicKey = serverPublicKeyBase64==\n"
+            "Endpoint = de2.tunnelsats.com:51820\n"
+            "PersistentKeepalive = 25\n"
+        )
+
+        res = client.post('/api/local/upload-config', json={"config": config_text})
+        assert res.status_code == 200
+
+        saved = (data_dir / 'tunnelsats.conf').read_text()
+        assert saved.count("PersistentKeepalive = 25") == 1
 
     def test_upload_config_rejects_missing_required_blocks(self, client):
         config_text = "[Interface]\nPrivateKey = clientPrivateKeyBase64==\n"
