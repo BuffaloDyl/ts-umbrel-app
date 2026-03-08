@@ -357,7 +357,7 @@ class TestDataplaneAndRegressionFixes:
 
         assert os.path.exists(str(old_conf) + '.bak')
         assert not os.path.exists(old_conf)
-        assert not os.path.exists(str(target_conf) + '.bak')
+        assert os.path.exists(str(target_conf) + '.bak')
         assert target_conf.read_text() == config_text
 
         meta_path = data_dir / 'tunnelsats-meta.json'

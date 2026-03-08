@@ -583,6 +583,66 @@ function resetReconcileBtn() {
 
 // NOTE: configureNode() and restoreNode() moved to PR #3/PR #4 (dataplane + API integration).
 
+function confirmOverwriteImport() {
+    return new Promise((resolve) => {
+        const existingModal = document.getElementById('import-overwrite-modal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+
+        const overlay = document.createElement('div');
+        overlay.id = 'import-overwrite-modal';
+        overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4';
+
+        const panel = document.createElement('div');
+        panel.className = 'w-full max-w-md rounded-xl border border-gray-700 bg-gray-900 p-6 shadow-2xl';
+
+        const title = document.createElement('h3');
+        title.className = 'text-lg font-bold text-white';
+        title.innerText = 'Replace Existing Config?';
+
+        const body = document.createElement('p');
+        body.className = 'mt-3 text-sm text-gray-300';
+        body.innerText = 'A TunnelSats configuration already exists on this node. Importing will replace the active config.';
+
+        const actions = document.createElement('div');
+        actions.className = 'mt-6 flex justify-end gap-3';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'rounded-lg border border-gray-600 px-4 py-2 text-sm font-semibold text-gray-200 hover:bg-gray-800';
+        cancelBtn.innerText = 'Cancel';
+
+        const confirmBtn = document.createElement('button');
+        confirmBtn.type = 'button';
+        confirmBtn.className = 'rounded-lg bg-tsyellow px-4 py-2 text-sm font-bold text-black hover:bg-yellow-400';
+        confirmBtn.innerText = 'Import Anyway';
+
+        actions.append(cancelBtn, confirmBtn);
+        panel.append(title, body, actions);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+
+        let settled = false;
+        const complete = (choice) => {
+            if (settled) return;
+            settled = true;
+            overlay.remove();
+            resolve(choice);
+        };
+
+        cancelBtn.addEventListener('click', () => complete(false));
+        confirmBtn.addEventListener('click', () => complete(true));
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) {
+                complete(false);
+            }
+        });
+
+        confirmBtn.focus();
+    });
+}
+
 // 4. Import Config
 async function importConfig() {
     const txt = document.getElementById('config-text').value;
@@ -604,7 +664,9 @@ async function importConfig() {
     }
 
     if (existingConfigs !== "None Detected" && existingConfigs !== "Loading..." && existingConfigs !== "") {
-        if (!confirm("Warning: You already have a Tunnelsats configuration active. Importing a new config will overwrite it. Do you wish to proceed?")) {
+        const shouldProceed = await confirmOverwriteImport();
+        if (!shouldProceed) {
+            setImportMessage("Import cancelled.", 'info');
             return;
         }
     }

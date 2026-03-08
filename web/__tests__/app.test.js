@@ -436,6 +436,51 @@ describe('Phase 3a: Import Config', () => {
         expect(msg).toContain('Configuration saved and parsed.');
     });
 
+    test('existing config cancel keeps import local and does not call backend', async () => {
+        const config = '[Interface]\nPrivateKey = abc\n\n[Peer]\nPublicKey = def\n';
+        document.getElementById('config-text').value = config;
+        document.getElementById('txt-configs').innerText = 'tunnelsats.conf';
+        global.fetch.mockClear();
+
+        const importPromise = window.importConfig();
+        const modal = document.getElementById('import-overwrite-modal');
+        expect(modal).toBeTruthy();
+
+        const cancelBtn = Array.from(modal.querySelectorAll('button')).find((btn) => btn.innerText === 'Cancel');
+        cancelBtn.click();
+        await importPromise;
+
+        expect(document.getElementById('import-overwrite-modal')).toBeNull();
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(document.getElementById('import-msg').innerText).toContain('Import cancelled.');
+    });
+
+    test('existing config confirm proceeds with upload request', async () => {
+        const config = '[Interface]\nPrivateKey = abc\n\n[Peer]\nPublicKey = def\nEndpoint = de2.tunnelsats.com:51820\n';
+        const expectedConfig = config.trim();
+        document.getElementById('config-text').value = config;
+        document.getElementById('txt-configs').innerText = 'tunnelsats.conf';
+        global.fetch.mockClear();
+
+        const importPromise = window.importConfig();
+        const modal = document.getElementById('import-overwrite-modal');
+        expect(modal).toBeTruthy();
+
+        const confirmBtn = Array.from(modal.querySelectorAll('button')).find((btn) => btn.innerText === 'Import Anyway');
+        confirmBtn.click();
+        await importPromise;
+
+        expect(document.getElementById('import-overwrite-modal')).toBeNull();
+        expect(global.fetch).toHaveBeenCalledWith(
+            '/api/local/upload-config',
+            expect.objectContaining({
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config: expectedConfig })
+            })
+        );
+    });
+
     test('import renders backend error message', async () => {
         global.fetch = jest.fn((url) => {
             if (url === '/api/local/upload-config') {

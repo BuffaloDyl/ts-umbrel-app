@@ -617,7 +617,7 @@ def upload_config():
 
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
-        backup_existing_wireguard_configs(excluded_files=("tunnelsats.conf",))
+        backup_existing_wireguard_configs()
         _write_file_secure(os.path.join(DATA_DIR, "tunnelsats.conf"), config_text)
         _write_file_secure(os.path.join(DATA_DIR, META_FILE), json.dumps(meta, indent=2))
     except (IOError, OSError) as exc:
