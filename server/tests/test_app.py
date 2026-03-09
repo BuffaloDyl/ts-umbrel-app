@@ -505,7 +505,8 @@ class TestDataplaneAndRegressionFixes:
 
             with patch('app.DATA_DIR', tmp_dir):
                 with patch('app.LND_TUNNELSATS_CONF_PATH', lnd_path):
-                    res = client.post('/api/local/configure-node', json={'nodeType': 'lnd'})
+                    with patch('app.restart_container_by_pattern', return_value=True) as mock_restart:
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'lnd'})
 
             assert res.status_code == 200
             payload = json.loads(res.data)
@@ -514,6 +515,7 @@ class TestDataplaneAndRegressionFixes:
             assert payload['cln'] is False
             assert payload['port'] == 35825
             assert payload['dns'] == 'de2.tunnelsats.com'
+            mock_restart.assert_called_once_with(r'(^|[_-])lnd([_-]|$)')
 
             with open(lnd_path, 'r') as f:
                 lnd_content = f.read()
@@ -532,7 +534,8 @@ class TestDataplaneAndRegressionFixes:
 
             with patch('app.DATA_DIR', tmp_dir):
                 with patch('app.LND_TUNNELSATS_CONF_PATH', lnd_path):
-                    res = client.post('/api/local/configure-node', json={'nodeType': 'lnd'})
+                    with patch('app.restart_container_by_pattern', return_value=True):
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'lnd'})
 
             assert res.status_code == 200
             payload = json.loads(res.data)
@@ -561,7 +564,8 @@ class TestDataplaneAndRegressionFixes:
 
             with patch('app.DATA_DIR', tmp_dir):
                 with patch('app.CLN_CONFIG_PATH', cln_path):
-                    res = client.post('/api/local/configure-node', json={'nodeType': 'cln'})
+                    with patch('app.restart_container_by_pattern', return_value=True) as mock_restart:
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'cln'})
 
             assert res.status_code == 200
             payload = json.loads(res.data)
@@ -570,12 +574,56 @@ class TestDataplaneAndRegressionFixes:
             assert payload['cln'] is True
             assert payload['port'] == 35825
             assert payload['dns'] == 'de2.tunnelsats.com'
+            mock_restart.assert_called_once_with(r'(^|[_-])(core-lightning|clightning|lightningd)([_-]|$)')
 
             with open(cln_path, 'r') as f:
                 cln_content = f.read()
-            assert 'bind-addr=0.0.0.0:9735' in cln_content
             assert 'announce-addr=de2.tunnelsats.com:35825' in cln_content
             assert 'always-use-proxy=false' in cln_content
+
+    def test_configure_node_lnd_skips_restart_when_config_already_matches(self, client):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
+
+            with open(meta_path, 'w') as f:
+                json.dump({'vpnPort': 35825, 'serverDomain': 'de2.tunnelsats.com'}, f)
+
+            with open(lnd_path, 'w') as f:
+                f.write('[Application Options]\nexternalhosts=de2.tunnelsats.com:35825\n')
+
+            with patch('app.DATA_DIR', tmp_dir):
+                with patch('app.LND_TUNNELSATS_CONF_PATH', lnd_path):
+                    with patch('app.restart_container_by_pattern', return_value=True) as mock_restart:
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'lnd'})
+
+            assert res.status_code == 200
+            payload = json.loads(res.data)
+            assert payload['success'] is True
+            assert payload['lnd'] is True
+            assert payload['lnd_changed'] is False
+            mock_restart.assert_not_called()
+
+    def test_configure_node_lnd_returns_500_when_restart_fails(self, client):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
+
+            with open(meta_path, 'w') as f:
+                json.dump({'vpnPort': 35825, 'serverDomain': 'de2.tunnelsats.com'}, f)
+
+            with open(lnd_path, 'w') as f:
+                f.write('[Application Options]\nfoo=bar\n')
+
+            with patch('app.DATA_DIR', tmp_dir):
+                with patch('app.LND_TUNNELSATS_CONF_PATH', lnd_path):
+                    with patch('app.restart_container_by_pattern', return_value=False):
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'lnd'})
+
+            assert res.status_code == 500
+            payload = json.loads(res.data)
+            assert payload['success'] is False
+            assert payload['error'] == 'Failed to restart LND container.'
 
     def test_restore_node_comments_expected_lines(self, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -618,10 +666,10 @@ class TestDataplaneAndRegressionFixes:
 
             with open(cln_path, 'r') as f:
                 cln_content = f.read()
-            assert '# bind-addr=0.0.0.0:9735\n' in cln_content
+            assert 'bind-addr=0.0.0.0:9735\n' in cln_content
             assert '# announce-addr=vpn.tunnelsats.com:9735\n' in cln_content
             assert '# always-use-proxy=false\n' in cln_content
-            assert '# # bind-addr=already-commented' not in cln_content
+            assert '# bind-addr=already-commented\n' in cln_content
 
     def test_restore_node_reports_processed_without_changes(self, client):
         with tempfile.TemporaryDirectory() as tmp_dir:

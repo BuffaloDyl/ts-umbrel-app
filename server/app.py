@@ -456,6 +456,21 @@ def docker_api(path):
         return None
 
 
+def docker_api_post(path):
+    if not os.path.exists(DOCKER_SOCK):
+        return False
+    try:
+        subprocess.check_output(
+            ["curl", "-sS", "--fail", "-X", "POST", "--unix-socket", DOCKER_SOCK, f"http://localhost{path}"],
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+        return True
+    except (subprocess.SubprocessError, FileNotFoundError, TimeoutError, OSError) as exc:
+        app.logger.warning(f"Docker API POST failed for path {path}: {exc}")
+        return False
+
+
 def container_ip_by_match(pattern):
     containers = docker_api("/containers/json?all=0")
     if not containers:
@@ -472,6 +487,27 @@ def container_ip_by_match(pattern):
                     if ip_addr:
                         return ip_addr
     return ""
+
+
+def container_id_by_match(pattern):
+    containers = docker_api("/containers/json?all=0")
+    if not containers:
+        return ""
+
+    for item in containers:
+        names = item.get("Names", [])
+        for name in names:
+            clean = name.lstrip("/")
+            if re.search(pattern, clean):
+                return item.get("Id", "")
+    return ""
+
+
+def restart_container_by_pattern(pattern):
+    container_id = container_id_by_match(pattern)
+    if not container_id:
+        return False
+    return docker_api_post(f"/containers/{container_id}/restart")
 
 
 def read_dataplane_state():
@@ -931,6 +967,8 @@ def configure_node():
         )
         if not lnd_processed:
             return jsonify({"success": False, "error": "Failed to modify LND config."}), 500
+        if lnd_changed and not restart_container_by_pattern(r"(^|[_-])lnd([_-]|$)"):
+            return jsonify({"success": False, "error": "Failed to restart LND container."}), 500
 
         return jsonify(
             {
@@ -945,7 +983,6 @@ def configure_node():
 
     # CLN target
     cln_steps = (
-        ("bind-addr=", "bind-addr=0.0.0.0:9735"),
         ("announce-addr=", f"announce-addr={dns}:{port}"),
         ("always-use-proxy=", "always-use-proxy=false"),
     )
@@ -955,6 +992,9 @@ def configure_node():
         if not processed:
             return jsonify({"success": False, "error": "Failed to modify CLN config."}), 500
         cln_changed = cln_changed or changed
+
+    if cln_changed and not restart_container_by_pattern(r"(^|[_-])(core-lightning|clightning|lightningd)([_-]|$)"):
+        return jsonify({"success": False, "error": "Failed to restart CLN container."}), 500
 
     return jsonify(
         {
@@ -979,7 +1019,6 @@ def restore_node():
     cln_processed, cln_changed = comment_out_config_lines(
         CLN_CONFIG_PATH,
         (
-            "bind-addr=",
             "announce-addr=",
             "always-use-proxy=",
         ),
