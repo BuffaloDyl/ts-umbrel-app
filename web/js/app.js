@@ -7,6 +7,7 @@ var purchaseMode = "buy"; // "buy" or "renew"
 const BASE_PRICE_USD = 3;
 const DISCOUNTS = { 1: 0, 3: 0.05, 6: 0.10, 12: 0.20 };
 let currentSatsPerDollar = null;
+const POLL_INTERVAL_MS = 3000;
 
 async function fetchPricing() {
     try {
@@ -102,12 +103,23 @@ function switchTab(tabId) {
     }
     ['buy', 'renew'].forEach(mode => {
         const box = document.getElementById(`invoice-box-${mode}`);
-        if (box) box.classList.add('hidden');
-        
         const btnCreate = document.getElementById(`btn-create-${mode}`);
-        if (btnCreate) {
-            btnCreate.innerText = mode === 'renew' ? "Generate Renewal Invoice" : "Generate Lightning Invoice";
-            btnCreate.disabled = false;
+        
+        if (activePaymentHash && tabId === mode && purchaseMode === mode) {
+            // Restore active invoice UI and resume polling
+            if (box) box.classList.remove('hidden');
+            if (btnCreate) {
+                btnCreate.innerText = "Invoice Active...";
+                btnCreate.disabled = true;
+            }
+            pollInterval = setInterval(pollPayment, POLL_INTERVAL_MS);
+        } else {
+            // Hide and reset inactive or completed flows
+            if (box) box.classList.add('hidden');
+            if (btnCreate) {
+                btnCreate.innerText = mode === 'renew' ? "Generate Renewal Invoice" : "Generate Lightning Invoice";
+                btnCreate.disabled = false;
+            }
         }
     });
 
@@ -357,7 +369,7 @@ async function createSub(mode) {
 
             // Start Polling (clear any existing interval first)
             if (pollInterval) clearInterval(pollInterval);
-            pollInterval = setInterval(pollPayment, 3000);
+            pollInterval = setInterval(pollPayment, POLL_INTERVAL_MS);
         } else if (data.message) {
             displayPurchaseError(data.message);
         }
