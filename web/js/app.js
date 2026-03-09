@@ -607,6 +607,12 @@ async function pollReconcileStatus(url) {
 
     try {
         const res = await fetch(url);
+        if (!res.ok) {
+            document.getElementById('reconcile-text').innerText = "Failed";
+            setTimeout(resetReconcileBtn, 3000);
+            fetchStatus();
+            return;
+        }
         const data = await res.json();
 
         if (data.complete) {
@@ -684,8 +690,8 @@ async function restoreNode() {
         const data = await res.json();
 
         if (res.ok) {
-            const lndState = data.lnd_changed ? 'updated' : 'no changes';
-            const clnState = data.cln_changed ? 'updated' : 'no changes';
+            const lndState = data.lnd ? (data.lnd_changed ? 'updated' : 'no changes') : 'config not found';
+            const clnState = data.cln ? (data.cln_changed ? 'updated' : 'no changes') : 'config not found';
             setActionMessage('restore-node-msg', `Restore complete. LND: ${lndState}. CLN: ${clnState}.`, 'success');
             fetchStatus();
         } else {

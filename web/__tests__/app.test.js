@@ -637,4 +637,66 @@ describe('Phase 3b: Install Config', () => {
         expect(msg).toContain('LND');
         expect(msg).toContain('CLN');
     });
+
+    test('restoreNode reports missing configs clearly', async () => {
+        global.fetch = jest.fn((url) => {
+            if (url === '/api/local/restore-node') {
+                return Promise.resolve({
+                    json: () => Promise.resolve({
+                        lnd: false,
+                        cln: false,
+                        lnd_changed: false,
+                        cln_changed: false
+                    }),
+                    ok: true
+                });
+            }
+            return Promise.resolve({
+                json: () => Promise.resolve({
+                    wg_status: 'Disconnected',
+                    wg_pubkey: '',
+                    configs_found: [],
+                    version: 'v3.0.0',
+                    target_impl: 'lnd',
+                    servers: []
+                }),
+                ok: true
+            });
+        });
+
+        await window.restoreNode();
+
+        const msg = document.getElementById('restore-node-msg').innerText;
+        expect(msg).toContain('LND: config not found');
+        expect(msg).toContain('CLN: config not found');
+    });
+
+    test('pollReconcileStatus fails fast on non-2xx responses', async () => {
+        const timeoutSpy = jest.spyOn(window, 'setTimeout');
+        global.fetch = jest.fn((url) => {
+            if (url === '/api/local/reconcile/failure-case') {
+                return Promise.resolve({
+                    json: () => Promise.resolve({ error: 'temporary failure' }),
+                    ok: false
+                });
+            }
+            return Promise.resolve({
+                json: () => Promise.resolve({
+                    wg_status: 'Disconnected',
+                    wg_pubkey: '',
+                    configs_found: [],
+                    version: 'v3.0.0',
+                    target_impl: 'lnd',
+                    servers: []
+                }),
+                ok: true
+            });
+        });
+
+        await window.pollReconcileStatus('/api/local/reconcile/failure-case');
+
+        expect(document.getElementById('reconcile-text').innerText).toBe('Failed');
+        expect(timeoutSpy).toHaveBeenCalledWith(window.resetReconcileBtn, 3000);
+        expect(timeoutSpy.mock.calls.some(([, delay]) => delay === 2000)).toBe(false);
+    });
 });

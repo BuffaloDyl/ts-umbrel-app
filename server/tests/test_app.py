@@ -551,6 +551,31 @@ class TestDataplaneAndRegressionFixes:
             assert host_idx != -1
             assert section_idx < host_idx
 
+    def test_configure_node_lnd_creates_config_file_when_missing(self, client):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
+
+            with open(meta_path, 'w') as f:
+                json.dump({'vpnPort': 35825, 'serverDomain': 'de2.tunnelsats.com'}, f)
+
+            with patch('app.DATA_DIR', tmp_dir):
+                with patch('app.LND_TUNNELSATS_CONF_PATH', lnd_path):
+                    with patch('app.restart_container_by_pattern', return_value=True) as mock_restart:
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'lnd'})
+
+            assert res.status_code == 200
+            payload = json.loads(res.data)
+            assert payload['success'] is True
+            assert payload['lnd'] is True
+            assert os.path.exists(lnd_path)
+            mock_restart.assert_called_once_with(r'(^|[_-])lnd([_-]|$)')
+
+            with open(lnd_path, 'r') as f:
+                lnd_content = f.read()
+            assert '[Application Options]\n' in lnd_content
+            assert 'externalhosts=de2.tunnelsats.com:35825\n' in lnd_content
+
     def test_configure_node_cln_injects_expected_lines_from_metadata(self, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
             meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
@@ -580,6 +605,35 @@ class TestDataplaneAndRegressionFixes:
                 cln_content = f.read()
             assert 'announce-addr=de2.tunnelsats.com:35825' in cln_content
             assert 'always-use-proxy=false' in cln_content
+
+    def test_configure_node_cln_dedupes_commented_and_active_lines(self, client):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            cln_path = os.path.join(tmp_dir, 'config')
+
+            with open(meta_path, 'w') as f:
+                json.dump({'vpnPort': 35825, 'serverDomain': 'de2.tunnelsats.com'}, f)
+
+            with open(cln_path, 'w') as f:
+                f.write(
+                    '# announce-addr=old.tunnelsats.com:1111\n'
+                    'announce-addr=old.tunnelsats.com:2222\n'
+                    '# always-use-proxy=true\n'
+                    'always-use-proxy=true\n'
+                )
+
+            with patch('app.DATA_DIR', tmp_dir):
+                with patch('app.CLN_CONFIG_PATH', cln_path):
+                    with patch('app.restart_container_by_pattern', return_value=True):
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'cln'})
+
+            assert res.status_code == 200
+            with open(cln_path, 'r') as f:
+                cln_content = f.read()
+
+            assert cln_content.count('announce-addr=de2.tunnelsats.com:35825\n') == 1
+            assert cln_content.count('always-use-proxy=false\n') == 1
+            assert 'old.tunnelsats.com' not in cln_content
 
     def test_configure_node_lnd_skips_restart_when_config_already_matches(self, client):
         with tempfile.TemporaryDirectory() as tmp_dir:

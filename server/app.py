@@ -151,15 +151,14 @@ def comment_out_config_lines(path, prefixes):
 
 
 def upsert_config_line(path, prefix, replacement_line):
-    if not os.path.exists(path):
-        return False, False
-
-    try:
-        with open(path, "r", encoding="utf-8") as conf_fp:
-            lines = conf_fp.readlines()
-    except (IOError, OSError) as exc:
-        app.logger.warning(f"Error reading {path} for configure: {exc}")
-        return False, False
+    lines = []
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as conf_fp:
+                lines = conf_fp.readlines()
+        except (IOError, OSError) as exc:
+            app.logger.warning(f"Error reading {path} for configure: {exc}")
+            return False, False
 
     changed = False
     found = False
@@ -168,24 +167,17 @@ def upsert_config_line(path, prefix, replacement_line):
 
     for line in lines:
         stripped = line.lstrip()
-        if stripped.startswith("#"):
-            uncommented = stripped[1:].lstrip()
-            if uncommented.startswith(prefix):
+        candidate = stripped[1:].lstrip() if stripped.startswith("#") else stripped
+        if candidate.startswith(prefix):
+            if not found:
                 if line != normalized_line:
                     changed = True
                 updated_lines.append(normalized_line)
                 found = True
             else:
-                updated_lines.append(line)
-            continue
-
-        if stripped.startswith(prefix):
-            if line != normalized_line:
                 changed = True
-            updated_lines.append(normalized_line)
-            found = True
-        else:
-            updated_lines.append(line)
+            continue
+        updated_lines.append(line)
 
     if not found:
         updated_lines.append(normalized_line)
@@ -193,10 +185,11 @@ def upsert_config_line(path, prefix, replacement_line):
 
     if changed:
         file_mode = None
-        try:
-            file_mode = os.stat(path).st_mode & 0o777
-        except (IOError, OSError) as exc:
-            app.logger.warning(f"Error reading file mode for {path}: {exc}")
+        if os.path.exists(path):
+            try:
+                file_mode = os.stat(path).st_mode & 0o777
+            except (IOError, OSError) as exc:
+                app.logger.warning(f"Error reading file mode for {path}: {exc}")
 
         tmp_path = os.path.join(os.path.dirname(path) or ".", f".{os.path.basename(path)}.tmp.{uuid.uuid4().hex}")
         try:
@@ -218,15 +211,14 @@ def upsert_config_line(path, prefix, replacement_line):
 
 
 def upsert_config_line_in_section(path, section_header, prefix, replacement_line):
-    if not os.path.exists(path):
-        return False, False
-
-    try:
-        with open(path, "r", encoding="utf-8") as conf_fp:
-            lines = conf_fp.readlines()
-    except (IOError, OSError) as exc:
-        app.logger.warning(f"Error reading {path} for configure: {exc}")
-        return False, False
+    lines = []
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as conf_fp:
+                lines = conf_fp.readlines()
+        except (IOError, OSError) as exc:
+            app.logger.warning(f"Error reading {path} for configure: {exc}")
+            return False, False
 
     changed = False
     normalized_line = f"{replacement_line}\n"
@@ -281,10 +273,11 @@ def upsert_config_line_in_section(path, section_header, prefix, replacement_line
 
     if changed:
         file_mode = None
-        try:
-            file_mode = os.stat(path).st_mode & 0o777
-        except (IOError, OSError) as exc:
-            app.logger.warning(f"Error reading file mode for {path}: {exc}")
+        if os.path.exists(path):
+            try:
+                file_mode = os.stat(path).st_mode & 0o777
+            except (IOError, OSError) as exc:
+                app.logger.warning(f"Error reading file mode for {path}: {exc}")
 
         tmp_path = os.path.join(os.path.dirname(path) or ".", f".{os.path.basename(path)}.tmp.{uuid.uuid4().hex}")
         try:
