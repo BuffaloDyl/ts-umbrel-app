@@ -150,6 +150,217 @@ def comment_out_config_lines(path, prefixes):
     return True, changed
 
 
+def upsert_config_line(path, prefix, replacement_line):
+    lines = []
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as conf_fp:
+                lines = conf_fp.readlines()
+        except (IOError, OSError) as exc:
+            app.logger.warning(f"Error reading {path} for configure: {exc}")
+            return False, False
+
+    changed = False
+    found = False
+    updated_lines = []
+    normalized_line = f"{replacement_line}\n"
+
+    for line in lines:
+        stripped = line.lstrip()
+        candidate = stripped[1:].lstrip() if stripped.startswith("#") else stripped
+        if candidate.startswith(prefix):
+            if not found:
+                if line != normalized_line:
+                    changed = True
+                updated_lines.append(normalized_line)
+                found = True
+            else:
+                changed = True
+            continue
+        updated_lines.append(line)
+
+    if not found:
+        updated_lines.append(normalized_line)
+        changed = True
+
+    if changed:
+        file_mode = None
+        if os.path.exists(path):
+            try:
+                file_mode = os.stat(path).st_mode & 0o777
+            except (IOError, OSError) as exc:
+                app.logger.warning(f"Error reading file mode for {path}: {exc}")
+
+        tmp_path = os.path.join(os.path.dirname(path) or ".", f".{os.path.basename(path)}.tmp.{uuid.uuid4().hex}")
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as conf_fp:
+                conf_fp.writelines(updated_lines)
+            if file_mode is not None:
+                os.chmod(tmp_path, file_mode)
+            os.replace(tmp_path, path)
+        except (IOError, OSError) as exc:
+            app.logger.warning(f"Error writing {path} for configure: {exc}")
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+            return False, False
+
+    return True, changed
+
+
+def upsert_config_lines(path, replacements):
+    lines = []
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as conf_fp:
+                lines = conf_fp.readlines()
+        except (IOError, OSError) as exc:
+            app.logger.warning(f"Error reading {path} for configure: {exc}")
+            return False, False
+
+    changed = False
+    for prefix, replacement_line in replacements:
+        found = False
+        updated_lines = []
+        normalized_line = f"{replacement_line}\n"
+
+        for line in lines:
+            stripped = line.lstrip()
+            candidate = stripped[1:].lstrip() if stripped.startswith("#") else stripped
+            if candidate.startswith(prefix):
+                if not found:
+                    if line != normalized_line:
+                        changed = True
+                    updated_lines.append(normalized_line)
+                    found = True
+                else:
+                    changed = True
+                continue
+            updated_lines.append(line)
+
+        if not found:
+            updated_lines.append(normalized_line)
+            changed = True
+
+        lines = updated_lines
+
+    if changed:
+        file_mode = None
+        if os.path.exists(path):
+            try:
+                file_mode = os.stat(path).st_mode & 0o777
+            except (IOError, OSError) as exc:
+                app.logger.warning(f"Error reading file mode for {path}: {exc}")
+
+        tmp_path = os.path.join(os.path.dirname(path) or ".", f".{os.path.basename(path)}.tmp.{uuid.uuid4().hex}")
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as conf_fp:
+                conf_fp.writelines(lines)
+            if file_mode is not None:
+                os.chmod(tmp_path, file_mode)
+            os.replace(tmp_path, path)
+        except (IOError, OSError) as exc:
+            app.logger.warning(f"Error writing {path} for configure: {exc}")
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+            return False, False
+
+    return True, changed
+
+
+def upsert_config_line_in_section(path, section_header, prefix, replacement_line):
+    lines = []
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as conf_fp:
+                lines = conf_fp.readlines()
+        except (IOError, OSError) as exc:
+            app.logger.warning(f"Error reading {path} for configure: {exc}")
+            return False, False
+
+    changed = False
+    normalized_line = f"{replacement_line}\n"
+    normalized_section = section_header.strip()
+    section_match = normalized_section.lower()
+
+    section_start = None
+    section_end = len(lines)
+    for idx, line in enumerate(lines):
+        if line.strip().lower() != section_match:
+            continue
+        section_start = idx
+        for next_idx in range(idx + 1, len(lines)):
+            next_line = lines[next_idx].strip()
+            if next_line.startswith("[") and next_line.endswith("]"):
+                section_end = next_idx
+                break
+        break
+
+    if section_start is None:
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] = f"{lines[-1]}\n"
+            changed = True
+        if lines and lines[-1].strip():
+            lines.append("\n")
+        lines.append(f"{normalized_section}\n")
+        lines.append(normalized_line)
+        changed = True
+        updated_lines = lines
+    else:
+        found = False
+        updated_section = []
+        for line in lines[section_start + 1 : section_end]:
+            stripped = line.lstrip()
+            candidate = stripped[1:].lstrip() if stripped.startswith("#") else stripped
+            if candidate.startswith(prefix):
+                if not found:
+                    if line != normalized_line:
+                        changed = True
+                    updated_section.append(normalized_line)
+                    found = True
+                else:
+                    changed = True
+                continue
+            updated_section.append(line)
+
+        if not found:
+            updated_section.append(normalized_line)
+            changed = True
+
+        updated_lines = lines[: section_start + 1] + updated_section + lines[section_end:]
+
+    if changed:
+        file_mode = None
+        if os.path.exists(path):
+            try:
+                file_mode = os.stat(path).st_mode & 0o777
+            except (IOError, OSError) as exc:
+                app.logger.warning(f"Error reading file mode for {path}: {exc}")
+
+        tmp_path = os.path.join(os.path.dirname(path) or ".", f".{os.path.basename(path)}.tmp.{uuid.uuid4().hex}")
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as conf_fp:
+                conf_fp.writelines(updated_lines)
+            if file_mode is not None:
+                os.chmod(tmp_path, file_mode)
+            os.replace(tmp_path, path)
+        except (IOError, OSError) as exc:
+            app.logger.warning(f"Error writing {path} for configure: {exc}")
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+            return False, False
+
+    return True, changed
+
+
 def _parse_config_comments(config_text):
     meta = {}
     for line in config_text.split("\n"):
@@ -184,6 +395,28 @@ def _write_file_secure(path, content):
         fp.write(content)
     os.chmod(tmp_path, 0o600)
     os.replace(tmp_path, path)
+
+
+def _set_restart_pending(meta_path, meta, key, is_pending):
+    has_key = key in meta
+    current_pending = bool(meta.get(key))
+
+    if is_pending:
+        if has_key and current_pending:
+            return True
+        meta[key] = True
+    else:
+        if not has_key:
+            return True
+        meta.pop(key, None)
+
+    try:
+        _write_file_secure(meta_path, json.dumps(meta, indent=2))
+    except (IOError, OSError) as exc:
+        app.logger.warning(f"Failed to persist restart-pending state for {key}: {exc}")
+        return False
+
+    return True
 
 
 def _has_required_wireguard_blocks(config_text):
@@ -248,6 +481,10 @@ def _ensure_peer_persistent_keepalive(config_text, keepalive=25):
 
 
 def _derive_wg_public_key(private_key):
+    private_key = str(private_key or "").strip()
+    if not private_key or len(private_key) > 1024:
+        return ""
+
     try:
         result = subprocess.run(
             ["wg", "pubkey"],
@@ -255,6 +492,7 @@ def _derive_wg_public_key(private_key):
             text=True,
             capture_output=True,
             check=True,
+            timeout=5,
         )
         return result.stdout.strip()
     except (subprocess.SubprocessError, OSError) as exc:
@@ -301,6 +539,21 @@ def docker_api(path):
         return None
 
 
+def docker_api_post(path):
+    if not os.path.exists(DOCKER_SOCK):
+        return False
+    try:
+        subprocess.check_output(
+            ["curl", "-sS", "--fail", "-X", "POST", "--unix-socket", DOCKER_SOCK, f"http://localhost{path}"],
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+        return True
+    except (subprocess.SubprocessError, FileNotFoundError, TimeoutError, OSError) as exc:
+        app.logger.warning(f"Docker API POST failed for path {path}: {exc}")
+        return False
+
+
 def container_ip_by_match(pattern):
     containers = docker_api("/containers/json?all=0")
     if not containers:
@@ -317,6 +570,27 @@ def container_ip_by_match(pattern):
                     if ip_addr:
                         return ip_addr
     return ""
+
+
+def container_id_by_match(pattern):
+    containers = docker_api("/containers/json?all=0")
+    if not containers:
+        return ""
+
+    for item in containers:
+        names = item.get("Names", [])
+        for name in names:
+            clean = name.lstrip("/")
+            if re.search(pattern, clean):
+                return item.get("Id", "")
+    return ""
+
+
+def restart_container_by_pattern(pattern):
+    container_id = container_id_by_match(pattern)
+    if not container_id:
+        return False
+    return docker_api_post(f"/containers/{container_id}/restart")
 
 
 def read_dataplane_state():
@@ -740,6 +1014,90 @@ def get_metadata():
     return jsonify(meta_data)
 
 
+@app.route("/api/local/configure-node", methods=["POST"])
+def configure_node():
+    payload = request.get_json(silent=True) or {}
+    node_type = str(payload.get("nodeType", "")).strip().lower()
+
+    if node_type not in ("lnd", "cln"):
+        return jsonify({"success": False, "error": "Invalid nodeType. Use 'lnd' or 'cln'."}), 400
+
+    meta_path = os.path.join(DATA_DIR, META_FILE)
+    if not os.path.exists(meta_path):
+        return jsonify({"success": False, "error": "Missing tunnelsats metadata file."}), 400
+
+    try:
+        with open(meta_path, "r", encoding="utf-8") as fp:
+            meta = json.load(fp)
+    except (IOError, OSError, json.JSONDecodeError):
+        return jsonify({"success": False, "error": "Unable to read tunnelsats metadata file."}), 500
+
+    dns = str(meta.get("serverDomain", "")).strip()
+    try:
+        port = int(meta.get("vpnPort", 0))
+    except (TypeError, ValueError):
+        port = 0
+
+    if not dns or port <= 0:
+        return jsonify({"success": False, "error": "Metadata is missing vpnPort or serverDomain."}), 400
+
+    lnd_pending_key = "lndRestartPending"
+    cln_pending_key = "clnRestartPending"
+
+    if node_type == "lnd":
+        lnd_processed, lnd_changed = upsert_config_line_in_section(
+            LND_TUNNELSATS_CONF_PATH,
+            "[Application Options]",
+            "externalhosts=",
+            f"externalhosts={dns}:{port}",
+        )
+        if not lnd_processed:
+            return jsonify({"success": False, "error": "Failed to modify LND config."}), 500
+        lnd_need_restart = lnd_changed or bool(meta.get(lnd_pending_key))
+        if lnd_need_restart and not restart_container_by_pattern(r"(^|[_-])lnd([_-]|$)"):
+            _set_restart_pending(meta_path, meta, lnd_pending_key, True)
+            return jsonify({"success": False, "error": "Failed to restart LND container."}), 500
+        if lnd_need_restart:
+            _set_restart_pending(meta_path, meta, lnd_pending_key, False)
+
+        return jsonify(
+            {
+                "success": True,
+                "lnd": True,
+                "cln": False,
+                "lnd_changed": lnd_changed,
+                "port": port,
+                "dns": dns,
+            }
+        )
+
+    # CLN target
+    cln_steps = (
+        ("announce-addr=", f"announce-addr={dns}:{port}"),
+        ("always-use-proxy=", "always-use-proxy=false"),
+    )
+    cln_processed, cln_changed = upsert_config_lines(CLN_CONFIG_PATH, cln_steps)
+    if not cln_processed:
+        return jsonify({"success": False, "error": "Failed to modify CLN config."}), 500
+
+    cln_need_restart = cln_changed or bool(meta.get(cln_pending_key))
+    if cln_need_restart and not restart_container_by_pattern(r"(^|[_-])(core-lightning|clightning|lightningd)([_-]|$)"):
+        _set_restart_pending(meta_path, meta, cln_pending_key, True)
+        return jsonify({"success": False, "error": "Failed to restart CLN container."}), 500
+    if cln_need_restart:
+        _set_restart_pending(meta_path, meta, cln_pending_key, False)
+
+    return jsonify(
+        {
+            "success": True,
+            "lnd": False,
+            "cln": True,
+            "cln_changed": cln_changed,
+            "port": port,
+            "dns": dns,
+        }
+    )
+
 @app.route("/api/local/restore-node", methods=["POST"])
 def restore_node():
     lnd_processed, lnd_changed = comment_out_config_lines(
@@ -752,7 +1110,6 @@ def restore_node():
     cln_processed, cln_changed = comment_out_config_lines(
         CLN_CONFIG_PATH,
         (
-            "bind-addr=",
             "announce-addr=",
             "always-use-proxy=",
         ),

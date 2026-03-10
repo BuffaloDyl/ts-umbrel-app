@@ -375,6 +375,7 @@ class TestDataplaneAndRegressionFixes:
             text=True,
             capture_output=True,
             check=True,
+            timeout=5,
         )
 
     @patch('app.subprocess.run')
@@ -415,6 +416,25 @@ class TestDataplaneAndRegressionFixes:
         payload = json.loads(res.data)
         assert payload["success"] is False
         assert payload["error"] == "Invalid WireGuard configuration format. Missing Interface PrivateKey."
+
+    @patch('app.subprocess.run')
+    def test_upload_config_rejects_overly_long_private_key_without_spawning_wg(self, mock_run, client):
+        long_key = "A" * 2048
+        config_text = (
+            "[Interface]\n"
+            f"PrivateKey = {long_key}\n"
+            "\n"
+            "[Peer]\n"
+            "PublicKey = serverPublicKeyBase64==\n"
+            "Endpoint = de2.tunnelsats.com:51820\n"
+        )
+
+        res = client.post('/api/local/upload-config', json={"config": config_text})
+        assert res.status_code == 400
+        payload = json.loads(res.data)
+        assert payload["success"] is False
+        assert payload["error"] == "Unable to derive public key from provided PrivateKey."
+        mock_run.assert_not_called()
 
     def test_local_status_includes_manifest_version_and_dataplane_defaults(self, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -492,6 +512,278 @@ class TestDataplaneAndRegressionFixes:
         assert payload['complete'] is True
         assert payload['success'] is False
 
+    def test_configure_node_lnd_injects_externalhosts_from_metadata(self, client):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
+
+            with open(meta_path, 'w') as f:
+                json.dump({'vpnPort': 35825, 'serverDomain': 'de2.tunnelsats.com'}, f)
+
+            with open(lnd_path, 'w') as f:
+                f.write('[Application Options]\nfoo=bar\n')
+
+            with patch('app.DATA_DIR', tmp_dir):
+                with patch('app.LND_TUNNELSATS_CONF_PATH', lnd_path):
+                    with patch('app.restart_container_by_pattern', return_value=True) as mock_restart:
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'lnd'})
+
+            assert res.status_code == 200
+            payload = json.loads(res.data)
+            assert payload['success'] is True
+            assert payload['lnd'] is True
+            assert payload['cln'] is False
+            assert payload['port'] == 35825
+            assert payload['dns'] == 'de2.tunnelsats.com'
+            mock_restart.assert_called_once_with(r'(^|[_-])lnd([_-]|$)')
+
+            with open(lnd_path, 'r') as f:
+                lnd_content = f.read()
+            assert 'externalhosts=de2.tunnelsats.com:35825' in lnd_content
+
+    def test_configure_node_lnd_creates_application_options_section_when_missing(self, client):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
+
+            with open(meta_path, 'w') as f:
+                json.dump({'vpnPort': 35825, 'serverDomain': 'de2.tunnelsats.com'}, f)
+
+            with open(lnd_path, 'w') as f:
+                f.write('foo=bar\n')
+
+            with patch('app.DATA_DIR', tmp_dir):
+                with patch('app.LND_TUNNELSATS_CONF_PATH', lnd_path):
+                    with patch('app.restart_container_by_pattern', return_value=True):
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'lnd'})
+
+            assert res.status_code == 200
+            payload = json.loads(res.data)
+            assert payload['success'] is True
+            assert payload['lnd'] is True
+
+            with open(lnd_path, 'r') as f:
+                lnd_content = f.read()
+
+            section_idx = lnd_content.find('[Application Options]\n')
+            host_idx = lnd_content.find('externalhosts=de2.tunnelsats.com:35825\n')
+            assert section_idx != -1
+            assert host_idx != -1
+            assert section_idx < host_idx
+
+    def test_configure_node_lnd_creates_config_file_when_missing(self, client):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
+
+            with open(meta_path, 'w') as f:
+                json.dump({'vpnPort': 35825, 'serverDomain': 'de2.tunnelsats.com'}, f)
+
+            with patch('app.DATA_DIR', tmp_dir):
+                with patch('app.LND_TUNNELSATS_CONF_PATH', lnd_path):
+                    with patch('app.restart_container_by_pattern', return_value=True) as mock_restart:
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'lnd'})
+
+            assert res.status_code == 200
+            payload = json.loads(res.data)
+            assert payload['success'] is True
+            assert payload['lnd'] is True
+            assert os.path.exists(lnd_path)
+            mock_restart.assert_called_once_with(r'(^|[_-])lnd([_-]|$)')
+
+            with open(lnd_path, 'r') as f:
+                lnd_content = f.read()
+            assert '[Application Options]\n' in lnd_content
+            assert 'externalhosts=de2.tunnelsats.com:35825\n' in lnd_content
+
+    def test_configure_node_cln_injects_expected_lines_from_metadata(self, client):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            cln_path = os.path.join(tmp_dir, 'config')
+
+            with open(meta_path, 'w') as f:
+                json.dump({'vpnPort': 35825, 'serverDomain': 'de2.tunnelsats.com'}, f)
+
+            with open(cln_path, 'w') as f:
+                f.write('foo=bar\n')
+
+            with patch('app.DATA_DIR', tmp_dir):
+                with patch('app.CLN_CONFIG_PATH', cln_path):
+                    with patch('app.restart_container_by_pattern', return_value=True) as mock_restart:
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'cln'})
+
+            assert res.status_code == 200
+            payload = json.loads(res.data)
+            assert payload['success'] is True
+            assert payload['lnd'] is False
+            assert payload['cln'] is True
+            assert payload['port'] == 35825
+            assert payload['dns'] == 'de2.tunnelsats.com'
+            mock_restart.assert_called_once_with(r'(^|[_-])(core-lightning|clightning|lightningd)([_-]|$)')
+
+            with open(cln_path, 'r') as f:
+                cln_content = f.read()
+            assert 'announce-addr=de2.tunnelsats.com:35825' in cln_content
+            assert 'always-use-proxy=false' in cln_content
+
+    def test_configure_node_cln_dedupes_commented_and_active_lines(self, client):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            cln_path = os.path.join(tmp_dir, 'config')
+
+            with open(meta_path, 'w') as f:
+                json.dump({'vpnPort': 35825, 'serverDomain': 'de2.tunnelsats.com'}, f)
+
+            with open(cln_path, 'w') as f:
+                f.write(
+                    '# announce-addr=old.tunnelsats.com:1111\n'
+                    'announce-addr=old.tunnelsats.com:2222\n'
+                    '# always-use-proxy=true\n'
+                    'always-use-proxy=true\n'
+                )
+
+            with patch('app.DATA_DIR', tmp_dir):
+                with patch('app.CLN_CONFIG_PATH', cln_path):
+                    with patch('app.restart_container_by_pattern', return_value=True):
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'cln'})
+
+            assert res.status_code == 200
+            with open(cln_path, 'r') as f:
+                cln_content = f.read()
+
+            assert cln_content.count('announce-addr=de2.tunnelsats.com:35825\n') == 1
+            assert cln_content.count('always-use-proxy=false\n') == 1
+            assert 'old.tunnelsats.com' not in cln_content
+
+    def test_configure_node_cln_leaves_file_unchanged_when_atomic_write_fails(self, client):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            cln_path = os.path.join(tmp_dir, 'config')
+            original_content = (
+                'foo=bar\n'
+                'announce-addr=old.tunnelsats.com:1111\n'
+                'always-use-proxy=true\n'
+            )
+
+            with open(meta_path, 'w') as f:
+                json.dump({'vpnPort': 35825, 'serverDomain': 'de2.tunnelsats.com'}, f)
+            with open(cln_path, 'w') as f:
+                f.write(original_content)
+
+            with patch('app.DATA_DIR', tmp_dir):
+                with patch('app.CLN_CONFIG_PATH', cln_path):
+                    with patch('app.os.replace', side_effect=OSError('replace failed')):
+                        with patch('app.restart_container_by_pattern', return_value=True) as mock_restart:
+                            res = client.post('/api/local/configure-node', json={'nodeType': 'cln'})
+
+            assert res.status_code == 500
+            payload = json.loads(res.data)
+            assert payload['success'] is False
+            assert payload['error'] == 'Failed to modify CLN config.'
+            mock_restart.assert_not_called()
+
+            with open(cln_path, 'r') as f:
+                assert f.read() == original_content
+
+    def test_configure_node_lnd_skips_restart_when_config_already_matches(self, client):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
+
+            with open(meta_path, 'w') as f:
+                json.dump({'vpnPort': 35825, 'serverDomain': 'de2.tunnelsats.com'}, f)
+
+            with open(lnd_path, 'w') as f:
+                f.write('[Application Options]\nexternalhosts=de2.tunnelsats.com:35825\n')
+
+            with patch('app.DATA_DIR', tmp_dir):
+                with patch('app.LND_TUNNELSATS_CONF_PATH', lnd_path):
+                    with patch('app.restart_container_by_pattern', return_value=True) as mock_restart:
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'lnd'})
+
+            assert res.status_code == 200
+            payload = json.loads(res.data)
+            assert payload['success'] is True
+            assert payload['lnd'] is True
+            assert payload['lnd_changed'] is False
+            mock_restart.assert_not_called()
+
+    def test_configure_node_lnd_returns_500_when_restart_fails(self, client):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
+
+            with open(meta_path, 'w') as f:
+                json.dump({'vpnPort': 35825, 'serverDomain': 'de2.tunnelsats.com'}, f)
+
+            with open(lnd_path, 'w') as f:
+                f.write('[Application Options]\nfoo=bar\n')
+
+            with patch('app.DATA_DIR', tmp_dir):
+                with patch('app.LND_TUNNELSATS_CONF_PATH', lnd_path):
+                    with patch('app.restart_container_by_pattern', return_value=False):
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'lnd'})
+
+            assert res.status_code == 500
+            payload = json.loads(res.data)
+            assert payload['success'] is False
+            assert payload['error'] == 'Failed to restart LND container.'
+
+            with open(meta_path, 'r') as f:
+                updated_meta = json.load(f)
+            assert updated_meta['lndRestartPending'] is True
+
+    def test_configure_node_lnd_retries_restart_when_pending_flag_set(self, client):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
+
+            with open(meta_path, 'w') as f:
+                json.dump({'vpnPort': 35825, 'serverDomain': 'de2.tunnelsats.com', 'lndRestartPending': True}, f)
+
+            with open(lnd_path, 'w') as f:
+                f.write('[Application Options]\nexternalhosts=de2.tunnelsats.com:35825\n')
+
+            with patch('app.DATA_DIR', tmp_dir):
+                with patch('app.LND_TUNNELSATS_CONF_PATH', lnd_path):
+                    with patch('app.restart_container_by_pattern', return_value=True) as mock_restart:
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'lnd'})
+
+            assert res.status_code == 200
+            payload = json.loads(res.data)
+            assert payload['success'] is True
+            assert payload['lnd_changed'] is False
+            mock_restart.assert_called_once_with(r'(^|[_-])lnd([_-]|$)')
+
+            with open(meta_path, 'r') as f:
+                updated_meta = json.load(f)
+            assert 'lndRestartPending' not in updated_meta
+
+    def test_configure_node_cln_returns_500_when_restart_fails(self, client):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            cln_path = os.path.join(tmp_dir, 'config')
+
+            with open(meta_path, 'w') as f:
+                json.dump({'vpnPort': 35825, 'serverDomain': 'de2.tunnelsats.com'}, f)
+
+            with open(cln_path, 'w') as f:
+                f.write('foo=bar\n')
+
+            with patch('app.DATA_DIR', tmp_dir):
+                with patch('app.CLN_CONFIG_PATH', cln_path):
+                    with patch('app.restart_container_by_pattern', return_value=False):
+                        res = client.post('/api/local/configure-node', json={'nodeType': 'cln'})
+
+            assert res.status_code == 500
+            payload = json.loads(res.data)
+            assert payload['success'] is False
+            assert payload['error'] == 'Failed to restart CLN container.'
+
+            with open(meta_path, 'r') as f:
+                updated_meta = json.load(f)
+            assert updated_meta['clnRestartPending'] is True
+
     def test_restore_node_comments_expected_lines(self, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
             lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
@@ -533,10 +825,10 @@ class TestDataplaneAndRegressionFixes:
 
             with open(cln_path, 'r') as f:
                 cln_content = f.read()
-            assert '# bind-addr=0.0.0.0:9735\n' in cln_content
+            assert 'bind-addr=0.0.0.0:9735\n' in cln_content
             assert '# announce-addr=vpn.tunnelsats.com:9735\n' in cln_content
             assert '# always-use-proxy=false\n' in cln_content
-            assert '# # bind-addr=already-commented' not in cln_content
+            assert '# bind-addr=already-commented\n' in cln_content
 
     def test_restore_node_reports_processed_without_changes(self, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
