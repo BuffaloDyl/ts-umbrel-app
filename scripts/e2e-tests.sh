@@ -154,6 +154,7 @@ scenario_missing_socket() {
         i=$((i + 1)); \
         sleep 1; \
       done; \
+      if [ $i -ge 30 ]; then echo "ERROR: server did not start within 30s" >&2; exit 1; fi; \
       status=$(curl -fsS http://127.0.0.1:9739/api/local/status || true); \
       echo "$status"; \
       echo "$status" | jq -e ".last_error | test(\"Docker socket\")" >/dev/null || exit 1; \
