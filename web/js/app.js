@@ -366,6 +366,7 @@ async function createSub(mode) {
     let serverId = null;
     const createBtn = document.getElementById(`btn-create-${mode}`);
     const previousPaymentHash = activePaymentHash;
+    const previousPurchaseMode = purchaseMode;
     const previousPollInterval = pollInterval;
     const hadActiveInvoiceForModeBeforeCall = Boolean(activePaymentHash && purchaseMode === mode);
     let invoiceCreatedInThisCall = false;
@@ -447,7 +448,8 @@ async function createSub(mode) {
         displayPurchaseError("Error creating subscription: " + e.message);
         // If invoice setup fails after receiving data, reset state so retry is possible.
         if (activePaymentHash && activePaymentHash !== previousPaymentHash && purchaseMode === mode) {
-            activePaymentHash = null;
+            activePaymentHash = previousPaymentHash;
+            purchaseMode = previousPurchaseMode;
             invoiceCreatedInThisCall = false;
             // Only clear polling if this call created a new interval.
             if (pollInterval && pollInterval !== previousPollInterval) {

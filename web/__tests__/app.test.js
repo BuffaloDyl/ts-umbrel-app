@@ -406,6 +406,8 @@ describe('Phase 1: createSub generates invoice', () => {
 
         expect(clearSpy).not.toHaveBeenCalledWith(98765);
         expect(window.pollInterval).toBe(98765);
+        expect(window.activePaymentHash).toBe('existing-hash');
+        expect(window.purchaseMode).toBe('renew');
     });
 });
 
