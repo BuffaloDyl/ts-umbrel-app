@@ -128,9 +128,9 @@ docker_api_with_code() {
 
 read_wg_config_path() {
     local -a files=()
-    mapfile -t files < <(find /data -name "tunnelsats*.conf" -type f | sort)
+    mapfile -t files < <(ls -1t /data/tunnelsats*.conf 2>/dev/null || true)
     if [ "${#files[@]}" -gt 1 ]; then
-        log WARN "Multiple tunnelsats*.conf files found, using first: ${files[0]}"
+        log WARN "Multiple tunnelsats*.conf files found, using most recent: ${files[0]}"
     fi
     echo "${files[0]:-}"
 }
@@ -274,6 +274,10 @@ ensure_wg_up() {
     mkdir -p /etc/wireguard
     cp "${source_cfg}" "${WG_CONF_PATH}"
 
+    # Ensure WireGuard doesn't aggressively hijack the host routing table via AllowedIPs=0.0.0.0/0
+    sed -i '/^\s*Table\s*=/Id' "${WG_CONF_PATH}"
+    sed -i '/^\[Interface\]/a Table = off' "${WG_CONF_PATH}"
+
     FORWARDING_PORT="$(extract_forwarding_port "${source_cfg}" || true)"
     if [ -z "${FORWARDING_PORT}" ]; then
         LAST_ERROR="No forwarding port metadata found in config"
@@ -363,6 +367,18 @@ ensure_policy_routing() {
         LAST_ERROR="Failed to discover WireGuard interface addresses on ${WG_IFACE}"
         return 1
     fi
+
+    # Mask the addresses to proper network CIDRs using python3 (e.g. 10.9.0.2/24 -> 10.9.0.0/24, or 10.9.0.100/32 -> 10.9.0.100/32)
+    wg_cidrs="$(python3 -c '
+import sys, ipaddress
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try:
+        print(ipaddress.IPv4Network(line, strict=False))
+    except (ValueError, TypeError):
+        pass
+' <<< "${wg_cidrs}")"
 
     while IFS= read -r cidr; do
         [ -n "${cidr}" ] || continue

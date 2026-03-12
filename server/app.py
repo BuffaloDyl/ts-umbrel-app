@@ -131,10 +131,15 @@ def comment_out_config_lines(path, prefixes):
 
     if changed:
         file_mode = None
+        file_uid = 1000
+        file_gid = 1000
         try:
-            file_mode = os.stat(path).st_mode & 0o777
+            st = os.stat(path)
+            file_mode = st.st_mode & 0o777
+            file_uid = st.st_uid
+            file_gid = st.st_gid
         except (IOError, OSError) as exc:
-            app.logger.warning(f"Error reading file mode for {path}: {exc}")
+            app.logger.warning(f"Error reading file stat for {path}: {exc}")
 
         tmp_path = os.path.join(os.path.dirname(path) or ".", f".{os.path.basename(path)}.tmp.{uuid.uuid4().hex}")
         try:
@@ -142,6 +147,10 @@ def comment_out_config_lines(path, prefixes):
                 conf_fp.writelines(updated_lines)
             if file_mode is not None:
                 os.chmod(tmp_path, file_mode)
+            try:
+                os.chown(tmp_path, file_uid, file_gid)
+            except OSError:
+                pass
             os.replace(tmp_path, path)
         except (IOError, OSError) as exc:
             app.logger.warning(f"Error writing {path} for restore: {exc}")
@@ -190,11 +199,16 @@ def upsert_config_line(path, prefix, replacement_line):
 
     if changed:
         file_mode = None
+        file_uid = 1000
+        file_gid = 1000
         if os.path.exists(path):
             try:
-                file_mode = os.stat(path).st_mode & 0o777
+                st = os.stat(path)
+                file_mode = st.st_mode & 0o777
+                file_uid = st.st_uid
+                file_gid = st.st_gid
             except (IOError, OSError) as exc:
-                app.logger.warning(f"Error reading file mode for {path}: {exc}")
+                app.logger.warning(f"Error reading file stat for {path}: {exc}")
 
         tmp_path = os.path.join(os.path.dirname(path) or ".", f".{os.path.basename(path)}.tmp.{uuid.uuid4().hex}")
         try:
@@ -202,6 +216,10 @@ def upsert_config_line(path, prefix, replacement_line):
                 conf_fp.writelines(updated_lines)
             if file_mode is not None:
                 os.chmod(tmp_path, file_mode)
+            try:
+                os.chown(tmp_path, file_uid, file_gid)
+            except OSError:
+                pass
             os.replace(tmp_path, path)
         except (IOError, OSError) as exc:
             app.logger.warning(f"Error writing {path} for configure: {exc}")
@@ -253,11 +271,16 @@ def upsert_config_lines(path, replacements):
 
     if changed:
         file_mode = None
+        file_uid = 1000
+        file_gid = 1000
         if os.path.exists(path):
             try:
-                file_mode = os.stat(path).st_mode & 0o777
+                st = os.stat(path)
+                file_mode = st.st_mode & 0o777
+                file_uid = st.st_uid
+                file_gid = st.st_gid
             except (IOError, OSError) as exc:
-                app.logger.warning(f"Error reading file mode for {path}: {exc}")
+                app.logger.warning(f"Error reading file stat for {path}: {exc}")
 
         tmp_path = os.path.join(os.path.dirname(path) or ".", f".{os.path.basename(path)}.tmp.{uuid.uuid4().hex}")
         try:
@@ -265,6 +288,10 @@ def upsert_config_lines(path, replacements):
                 conf_fp.writelines(lines)
             if file_mode is not None:
                 os.chmod(tmp_path, file_mode)
+            try:
+                os.chown(tmp_path, file_uid, file_gid)
+            except OSError:
+                pass
             os.replace(tmp_path, path)
         except (IOError, OSError) as exc:
             app.logger.warning(f"Error writing {path} for configure: {exc}")
@@ -341,11 +368,16 @@ def upsert_config_line_in_section(path, section_header, prefix, replacement_line
 
     if changed:
         file_mode = None
+        file_uid = 1000
+        file_gid = 1000
         if os.path.exists(path):
             try:
-                file_mode = os.stat(path).st_mode & 0o777
+                st = os.stat(path)
+                file_mode = st.st_mode & 0o777
+                file_uid = st.st_uid
+                file_gid = st.st_gid
             except (IOError, OSError) as exc:
-                app.logger.warning(f"Error reading file mode for {path}: {exc}")
+                app.logger.warning(f"Error reading file stat for {path}: {exc}")
 
         tmp_path = os.path.join(os.path.dirname(path) or ".", f".{os.path.basename(path)}.tmp.{uuid.uuid4().hex}")
         try:
@@ -353,6 +385,10 @@ def upsert_config_line_in_section(path, section_header, prefix, replacement_line
                 conf_fp.writelines(updated_lines)
             if file_mode is not None:
                 os.chmod(tmp_path, file_mode)
+            try:
+                os.chown(tmp_path, file_uid, file_gid)
+            except OSError:
+                pass
             os.replace(tmp_path, path)
         except (IOError, OSError) as exc:
             app.logger.warning(f"Error writing {path} for configure: {exc}")
@@ -399,6 +435,10 @@ def _write_file_secure(path, content):
     with open(tmp_path, "w", encoding="utf-8") as fp:
         fp.write(content)
     os.chmod(tmp_path, 0o600)
+    try:
+        os.chown(tmp_path, 1000, 1000)
+    except OSError:
+        pass
     os.replace(tmp_path, path)
 
 
@@ -551,7 +591,7 @@ def docker_api_post(path):
         subprocess.check_output(
             ["curl", "-sS", "--fail", "-X", "POST", "--unix-socket", DOCKER_SOCK, f"http://localhost{path}"],
             stderr=subprocess.DEVNULL,
-            timeout=5,
+            timeout=30,
         )
         return True
     except (subprocess.SubprocessError, FileNotFoundError, TimeoutError, OSError) as exc:
@@ -1078,6 +1118,7 @@ def configure_node():
 
     # CLN target
     cln_steps = (
+        ("bind-addr=", "bind-addr=0.0.0.0:9736"),
         ("announce-addr=", f"announce-addr={dns}:{port}"),
         ("always-use-proxy=", "always-use-proxy=false"),
     )
@@ -1115,6 +1156,7 @@ def restore_node():
     cln_processed, cln_changed = comment_out_config_lines(
         CLN_CONFIG_PATH,
         (
+            "bind-addr=",
             "announce-addr=",
             "always-use-proxy=",
         ),
