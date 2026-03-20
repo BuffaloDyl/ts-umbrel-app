@@ -920,3 +920,56 @@ describe('NWC Auto-Renew Features', () => {
         expect(promoLink.getAttribute('target')).toBe('_blank');
     });
 });
+
+describe('Subscription Renewal Fixes', () => {
+    beforeEach(() => {
+        setupDOM();
+        global.fetch = jest.fn(() =>
+            Promise.resolve({
+                json: () => Promise.resolve({ 
+                    status: 'paid', 
+                    subscription: { expiresAt: '2027-04-10T12:00:00Z' },
+                    wg_status: 'Connected',
+                    configs_found: [],
+                    version: 'v3.0.0'
+                }),
+                ok: true
+            })
+        );
+        evalScript();
+    });
+
+    afterEach(() => { jest.restoreAllMocks(); });
+
+    test('switchTab("dashboard") triggers fetchStatus', () => {
+        const fetchStatusSpy = jest.spyOn(window, 'fetchStatus');
+        window.switchTab('dashboard');
+        expect(fetchStatusSpy).toHaveBeenCalled();
+    });
+
+    test('switchTab("dashboard") clears polling before fetchStatus', () => {
+        const clearSpy = jest.spyOn(window, 'clearInterval').mockImplementation(() => {});
+        const fetchStatusSpy = jest.spyOn(window, 'fetchStatus').mockImplementation(() => Promise.resolve());
+        window.pollInterval = 12345;
+
+        window.switchTab('dashboard');
+
+        expect(clearSpy).toHaveBeenCalledWith(12345);
+        expect(window.pollInterval).toBeNull();
+        expect(clearSpy.mock.invocationCallOrder[0]).toBeLessThan(fetchStatusSpy.mock.invocationCallOrder[0]);
+    });
+
+    test('pollPayment for renew triggers fetchStatus on success', async () => {
+        const fetchStatusSpy = jest.spyOn(window, 'fetchStatus');
+        window.activePaymentHash = 'renew-hash-123';
+        window.purchaseMode = 'renew';
+        
+        const invoiceBox = document.getElementById('invoice-box-renew');
+        invoiceBox.classList.remove('hidden');
+        
+        await window.pollPayment();
+        
+        expect(fetchStatusSpy).toHaveBeenCalled();
+        expect(invoiceBox.textContent).toContain('Renewal Successful');
+    });
+});

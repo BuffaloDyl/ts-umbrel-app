@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 import time
 from ipaddress import ip_address, ip_network
+from typing import Dict, Any, List, Optional, Tuple, Iterable
 
 import requests
 import yaml
@@ -68,8 +69,9 @@ def client_is_allowed(remote_addr):
         return False
     try:
         remote_ip = ip_address(remote_addr)
-        if getattr(remote_ip, "ipv4_mapped", None):
-            remote_ip = remote_ip.ipv4_mapped
+        ipv4_mapped = getattr(remote_ip, "ipv4_mapped", None)
+        if ipv4_mapped:
+            remote_ip = ipv4_mapped
     except ValueError:
         return False
     return any(remote_ip in subnet for subnet in ALLOWED_NETWORKS)
@@ -187,8 +189,8 @@ def comment_out_config_lines(path, prefixes):
     return True, changed
 
 
-def upsert_config_line(path, prefix, replacement_line):
-    lines = []
+def upsert_config_line(path: str, prefix: str, replacement_line: str) -> Tuple[bool, bool]:
+    lines: List[str] = []
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as conf_fp:
@@ -203,8 +205,9 @@ def upsert_config_line(path, prefix, replacement_line):
     normalized_line = f"{replacement_line}\n"
 
     for line in lines:
-        stripped = line.lstrip()
-        candidate = stripped[1:].lstrip() if stripped.startswith("#") else stripped
+        line_str = str(line)
+        stripped = line_str.lstrip()
+        candidate = stripped.removeprefix("#").lstrip()
         if candidate.startswith(prefix):
             if not found:
                 if line != normalized_line:
@@ -256,7 +259,7 @@ def upsert_config_line(path, prefix, replacement_line):
     return True, changed
 
 
-def upsert_config_lines(path, replacements):
+def upsert_config_lines(path: str, replacements: Iterable[Tuple[str, str]]) -> Tuple[bool, bool]:
     lines = []
     if os.path.exists(path):
         try:
@@ -273,8 +276,9 @@ def upsert_config_lines(path, replacements):
         normalized_line = f"{replacement_line}\n"
 
         for line in lines:
-            stripped = line.lstrip()
-            candidate = stripped[1:].lstrip() if stripped.startswith("#") else stripped
+            line_str = str(line)
+            stripped: str = line_str.lstrip()
+            candidate: str = stripped.removeprefix("#").lstrip()
             if candidate.startswith(prefix):
                 if not found:
                     if line != normalized_line:
@@ -342,8 +346,8 @@ def upsert_config_lines(path, replacements):
     return True, changed
 
 
-def upsert_config_line_in_section(path, section_header, prefix, replacement_line):
-    lines = []
+def upsert_config_line_in_section(path: str, section_header: str, prefix: str, replacement_line: str) -> Tuple[bool, bool]:
+    lines: List[str] = []
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as conf_fp:
@@ -382,10 +386,11 @@ def upsert_config_line_in_section(path, section_header, prefix, replacement_line
         updated_lines = lines
     else:
         found = False
-        updated_section = []
+        updated_section: List[str] = []
         for line in lines[section_start + 1 : section_end]:
-            stripped = line.lstrip()
-            candidate = stripped[1:].lstrip() if stripped.startswith("#") else stripped
+            line_str = str(line)
+            stripped: str = line_str.lstrip()
+            candidate: str = stripped.removeprefix("#").lstrip()
             if candidate.startswith(prefix):
                 if not found:
                     if line != normalized_line:
@@ -395,13 +400,16 @@ def upsert_config_line_in_section(path, section_header, prefix, replacement_line
                 else:
                     changed = True
                 continue
-            updated_section.append(line)
+            updated_section.append(str(line))
 
         if not found:
             updated_section.append(normalized_line)
             changed = True
-
-        updated_lines = lines[: section_start + 1] + updated_section + lines[section_end:]
+        
+        # Explicit slicing with list cast for clarity
+        head: List[str] = list(lines[: section_start + 1])
+        tail: List[str] = list(lines[section_end:])
+        updated_lines: List[str] = head + updated_section + tail
 
     if changed:
         file_mode = 0o600
@@ -453,7 +461,7 @@ def upsert_config_line_in_section(path, section_header, prefix, replacement_line
 
 
 def _parse_config_comments(config_text):
-    meta = {}
+    meta: Dict[str, Any] = {}
     for line in config_text.split("\n"):
         line = line.strip()
         if match := re.match(r"^#\s*Port Forwarding:\s*(\d+)", line):
@@ -545,7 +553,7 @@ def _ensure_peer_persistent_keepalive(config_text, keepalive=25):
     if not lines:
         return config_text
 
-    updated_lines = []
+    updated_lines: List[str] = []
     in_peer = False
     peer_has_keepalive = False
 
@@ -656,15 +664,25 @@ def container_ip_by_match(pattern, containers=None):
         return ""
 
     for item in containers:
-        names = item.get("Names", [])
+        if not isinstance(item, dict):
+            continue
+        names = item.get("Names")
+        if not isinstance(names, list):
+            continue
         for name in names:
-            clean = name.lstrip("/")
+            name_str = str(name)
+            clean = name_str.lstrip("/")
             if re.search(pattern, clean):
-                networks = item.get("NetworkSettings", {}).get("Networks", {})
-                for network_data in networks.values():
-                    ip_addr = network_data.get("IPAddress")
-                    if ip_addr:
-                        return ip_addr
+                network_settings = item.get("NetworkSettings")
+                if isinstance(network_settings, dict):
+                    networks = network_settings.get("Networks")
+                    if isinstance(networks, dict):
+                        for network_data in networks.values():
+                            ip: str = ""
+                            if isinstance(network_data, dict):
+                                ip = str(network_data.get("IPAddress", ""))
+                            if ip:
+                                return ip
     return ""
 
 
@@ -765,9 +783,16 @@ def read_dataplane_state():
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as state_fp:
             data = json.load(state_fp)
-        defaults.update({k: v for k, v in data.items() if k in defaults})
-        if isinstance(data.get("docker_network"), dict):
-            defaults["docker_network"].update(data["docker_network"])
+            if isinstance(data, dict):
+                # Type-safe update of defaults
+                for k, v in data.items():
+                    if k in defaults:
+                        defaults[k] = v  # type: ignore (dynamic dict update)
+                
+                docker_net = data.get("docker_network")
+                target_net = defaults.get("docker_network")
+                if isinstance(docker_net, dict) and isinstance(target_net, dict):
+                    target_net.update(docker_net)
     except Exception:
         pass
 
@@ -895,7 +920,90 @@ def create_subscription():
 
 @app.route("/api/subscription/<paymentHash>", methods=["GET"])
 def check_subscription(paymentHash):
-    return proxy_request("GET", f"subscription/{paymentHash}")
+    # Proxy the check request to the core API
+    url = f"{TUNNELSATS_API_URL}/subscription/{paymentHash}"
+    try:
+        resp = requests.get(url, headers={"Content-Type": "application/json"}, timeout=10)
+        if resp.status_code == 200:
+            try:
+                data = resp.json()
+                # If the subscription is paid, ensure our local metadata is in sync.
+                if not isinstance(data, dict):
+                    app.logger.warning("Unexpected subscription response shape: expected JSON object.")
+                elif data.get("status") == "paid":
+                    # Support both standard 'subscription' object and top-level renewal fields
+                    new_expiry = data.get("newExpiry")
+                    sub_data = data.get("subscription")
+                    
+                    if isinstance(sub_data, dict):
+                        sync_payload = dict(sub_data)
+                        # Renewal APIs may include top-level newExpiry even when subscription exists.
+                        if new_expiry:
+                            sync_payload["newExpiry"] = new_expiry
+                        _update_local_metadata(sync_payload, payment_hash=paymentHash)
+                    elif new_expiry:
+                        # Direct renewal response format
+                        _update_local_metadata({"newExpiry": new_expiry}, payment_hash=paymentHash)
+            except ValueError as exc:
+                app.logger.warning(f"Failed to parse subscription data or update metadata: {exc}")
+            except Exception as exc:
+                app.logger.error(f"Metadata sync failed after subscription check: {exc}")
+
+        excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
+        filtered_headers = [
+            (name, value) for (name, value) in resp.headers.items() if name.lower() not in excluded_headers
+        ]
+        return (resp.content, resp.status_code, filtered_headers)
+    except requests.RequestException as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+def _update_local_metadata(subscription_data: Dict[str, Any], payment_hash: Optional[str] = None) -> bool:
+    """
+    Update tunnelsats-meta.json with latest subscription data (e.g. after renewal).
+    Only updates fields that are present in subscription_data.
+    """
+    meta_path = os.path.join(DATA_DIR, META_FILE)
+    if not os.path.exists(meta_path):
+        app.logger.warning(f"Metadata file not found at {meta_path}; skipping sync.")
+        return False
+
+    if not isinstance(subscription_data, dict):
+        app.logger.warning("Metadata sync skipped: subscription payload is not a JSON object.")
+        return False
+
+    try:
+        with open(meta_path, "r", encoding="utf-8") as fp:
+            meta = json.load(fp)
+    except (IOError, json.JSONDecodeError) as exc:
+        app.logger.warning(f"Failed to read metadata for sync: {exc}")
+        return False
+
+    if not isinstance(meta, dict):
+        app.logger.warning("Metadata sync skipped: metadata file is not a JSON object.")
+        return False
+
+    changed = False
+    # Prefer renewal-specific newExpiry; fall back to expiresAt for standard subscription payloads.
+    _new_expiry = subscription_data.get("newExpiry")
+    new_expiry = _new_expiry if _new_expiry is not None else subscription_data.get("expiresAt")
+    
+    if new_expiry and meta.get("expiresAt") != new_expiry:
+        meta["expiresAt"] = new_expiry
+        changed = True
+
+    if payment_hash and meta.get("paymentHash") != payment_hash:
+        meta["paymentHash"] = payment_hash
+        changed = True
+
+    if changed:
+        try:
+            _write_file_secure(meta_path, json.dumps(meta, indent=2))
+            return True
+        except (IOError, OSError) as exc:
+            app.logger.error(f"Failed to write synchronized metadata: {exc}")
+    
+    return False
 
 
 @app.route("/api/subscription/claim", methods=["POST"])
@@ -1272,7 +1380,7 @@ def configure_node():
                 "lnd_changed": False, 
                 "port": port, 
                 "dns": dns
-            }), 200
+            }), 422
 
         lnd_processed, lnd_changed = upsert_config_line_in_section(
             LND_CONFIG_PATH,
@@ -1309,7 +1417,7 @@ def configure_node():
             "cln_changed": False, 
             "port": port, 
             "dns": dns
-        }), 200
+        }), 422
 
     cln_steps = (
         ("bind-addr=", "bind-addr=0.0.0.0:9736"),

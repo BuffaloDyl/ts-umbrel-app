@@ -133,7 +133,7 @@ class TestClaimSavesConfig:
                           content_type='application/json')
         assert res.status_code == 200
 
-        meta_path = os.path.join(data_dir, 'tunnelsats-meta.json')
+        meta_path = os.path.join(data_dir, app_module.META_FILE)
         assert os.path.exists(meta_path), "tunnelsats-meta.json not created"
 
         with open(meta_path) as f:
@@ -166,7 +166,7 @@ class TestClaimSavesConfig:
         conf_files = [f for f in os.listdir(data_dir) if f.endswith('.conf')]
         assert len(conf_files) == 1
         conf_path = os.path.join(data_dir, conf_files[0])
-        meta_path = os.path.join(data_dir, 'tunnelsats-meta.json')
+        meta_path = os.path.join(data_dir, app_module.META_FILE)
 
         conf_mode = oct(os.stat(conf_path).st_mode & 0o777)
         meta_mode = oct(os.stat(meta_path).st_mode & 0o777)
@@ -230,7 +230,7 @@ class TestMetaEndpoint:
 
     def test_meta_returns_stored_metadata(self, client, data_dir):
         meta = {"serverId": "eu-de", "vpnPort": 35825}
-        meta_path = os.path.join(data_dir, 'tunnelsats-meta.json')
+        meta_path = os.path.join(data_dir, app_module.META_FILE)
         with open(meta_path, 'w') as f:
             json.dump(meta, f)
 
@@ -246,7 +246,7 @@ class TestMetaEndpoint:
             "presharedKey": "SuperSecretXYZ",
             "paymentHash": "hash12345"
         }
-        meta_path = os.path.join(data_dir, 'tunnelsats-meta.json')
+        meta_path = os.path.join(data_dir, app_module.META_FILE)
         with open(meta_path, 'w') as f:
             json.dump(meta, f)
 
@@ -266,7 +266,7 @@ class TestRenewEndpoint:
     def test_renew_autofills_missing_fields_from_metadata(self, mock_post, client, data_dir):
         # Create metadata
         meta = {"serverId": "au-syd", "wgPublicKey": "pubkey123"}
-        meta_path = os.path.join(data_dir, 'tunnelsats-meta.json')
+        meta_path = os.path.join(data_dir, app_module.META_FILE)
         with open(meta_path, 'w') as f:
             json.dump(meta, f)
 
@@ -300,7 +300,7 @@ class TestRenewEndpoint:
     @patch('app.requests.post')
     def test_renew_does_not_override_provided_fields(self, mock_post, client, data_dir):
         meta = {"serverId": "au-syd", "wgPublicKey": "oldkey123"}
-        meta_path = os.path.join(data_dir, 'tunnelsats-meta.json')
+        meta_path = os.path.join(data_dir, app_module.META_FILE)
         with open(meta_path, 'w') as f:
             json.dump(meta, f)
 
@@ -399,7 +399,7 @@ class TestDataplaneAndRegressionFixes:
         assert os.path.exists(str(target_conf) + '.bak')
         assert target_conf.read_text() == expected_saved_config
 
-        meta_path = data_dir / 'tunnelsats-meta.json'
+        meta_path = data_dir / app_module.META_FILE
         with open(meta_path, 'r') as fp:
             meta = json.load(fp)
         assert meta["serverId"] == "de2"
@@ -553,7 +553,7 @@ class TestDataplaneAndRegressionFixes:
     @patch('app.container_ids_by_match', return_value=['mock'])
     def test_configure_node_lnd_injects_externalhosts_from_metadata(self, mock_ids, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            meta_path = os.path.join(tmp_dir, app_module.META_FILE)
             lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
 
             with open(meta_path, 'w') as f:
@@ -583,21 +583,21 @@ class TestDataplaneAndRegressionFixes:
     def test_configure_node_returns_error_when_container_not_found(self, mock_ids, client):
         """Verifies P1 feedback: configure_node should return success=False when container is missing."""
         with tempfile.TemporaryDirectory() as tmp_dir:
-            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            meta_path = os.path.join(tmp_dir, app_module.META_FILE)
             with open(meta_path, 'w') as f:
                 json.dump({'vpnPort': 35825, 'serverDomain': 'de2.tunnelsats.com'}, f)
 
             with patch('app.DATA_DIR', tmp_dir):
                 # Test LND
                 res = client.post('/api/local/configure-node', json={'nodeType': 'lnd'})
-                assert res.status_code == 200
+                assert res.status_code == 422
                 payload = json.loads(res.data)
                 assert payload['success'] is False
                 assert 'LND container not found' in payload['error']
 
                 # Test CLN
                 res = client.post('/api/local/configure-node', json={'nodeType': 'cln'})
-                assert res.status_code == 200
+                assert res.status_code == 422
                 payload = json.loads(res.data)
                 assert payload['success'] is False
                 assert 'CLN container not found' in payload['error']
@@ -680,7 +680,7 @@ class TestDataplaneAndRegressionFixes:
     @patch('app.container_ids_by_match', return_value=['mock'])
     def test_configure_node_lnd_creates_application_options_section_when_missing(self, mock_ids, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            meta_path = os.path.join(tmp_dir, app_module.META_FILE)
             lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
 
             with open(meta_path, 'w') as f:
@@ -711,7 +711,7 @@ class TestDataplaneAndRegressionFixes:
     @patch('app.container_ids_by_match', return_value=['mock'])
     def test_configure_node_lnd_creates_config_file_when_missing(self, mock_ids, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            meta_path = os.path.join(tmp_dir, app_module.META_FILE)
             lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
 
             with open(meta_path, 'w') as f:
@@ -737,7 +737,7 @@ class TestDataplaneAndRegressionFixes:
     @patch('app.container_ids_by_match', return_value=['mock'])
     def test_configure_node_cln_injects_expected_lines_from_metadata(self, mock_ids, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            meta_path = os.path.join(tmp_dir, app_module.META_FILE)
             cln_path = os.path.join(tmp_dir, 'config')
 
             with open(meta_path, 'w') as f:
@@ -769,7 +769,7 @@ class TestDataplaneAndRegressionFixes:
     @patch('app.container_ids_by_match', return_value=['mock'])
     def test_configure_node_cln_dedupes_commented_and_active_lines(self, mock_ids, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            meta_path = os.path.join(tmp_dir, app_module.META_FILE)
             cln_path = os.path.join(tmp_dir, 'config')
 
             with open(meta_path, 'w') as f:
@@ -800,7 +800,7 @@ class TestDataplaneAndRegressionFixes:
     @patch('app.container_ids_by_match', return_value=['mock'])
     def test_configure_node_cln_leaves_file_unchanged_when_atomic_write_fails(self, mock_ids, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            meta_path = os.path.join(tmp_dir, app_module.META_FILE)
             cln_path = os.path.join(tmp_dir, 'config')
             original_content = (
                 'foo=bar\n'
@@ -831,7 +831,7 @@ class TestDataplaneAndRegressionFixes:
     @patch('app.container_ids_by_match', return_value=['mock'])
     def test_configure_node_lnd_forces_restart_even_when_config_matches(self, mock_ids, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            meta_path = os.path.join(tmp_dir, app_module.META_FILE)
             lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
 
             with open(meta_path, 'w') as f:
@@ -855,7 +855,7 @@ class TestDataplaneAndRegressionFixes:
     @patch('app.container_ids_by_match', return_value=['mock'])
     def test_configure_node_lnd_returns_500_when_restart_fails(self, mock_ids, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            meta_path = os.path.join(tmp_dir, app_module.META_FILE)
             lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
 
             with open(meta_path, 'w') as f:
@@ -881,7 +881,7 @@ class TestDataplaneAndRegressionFixes:
     @patch('app.container_ids_by_match', return_value=['mock'])
     def test_configure_node_lnd_retries_restart_when_pending_flag_set(self, mock_ids, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            meta_path = os.path.join(tmp_dir, app_module.META_FILE)
             lnd_path = os.path.join(tmp_dir, 'tunnelsats.conf')
 
             with open(meta_path, 'w') as f:
@@ -908,7 +908,7 @@ class TestDataplaneAndRegressionFixes:
     @patch('app.container_ids_by_match', return_value=['mock'])
     def test_configure_node_cln_returns_500_when_restart_fails(self, mock_ids, client):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            meta_path = os.path.join(tmp_dir, 'tunnelsats-meta.json')
+            meta_path = os.path.join(tmp_dir, app_module.META_FILE)
             cln_path = os.path.join(tmp_dir, 'config')
 
             with open(meta_path, 'w') as f:
@@ -1103,3 +1103,173 @@ class TestDataplaneAndRegressionFixes:
             ["ip", "-4", "addr", "show", "dev", "tunnelsatsv2"],
             capture_output=True, text=True, timeout=2
         )
+        assert mock_docker_api.call_count == 1
+
+    @patch('app.requests.get')
+    def test_check_subscription_updates_metadata_on_paid(self, mock_get, client):
+        # Case 1: Standard subscription object (e.g. for claim/new buy)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_resp.content = json.dumps({
+            "status": "paid",
+            "subscription": {
+                "expiresAt": "2027-04-10T20:55:39.663Z"
+            }
+        }).encode('utf-8')
+        mock_resp.json.return_value = {
+            "status": "paid",
+            "subscription": {
+                "expiresAt": "2027-04-10T20:55:39.663Z"
+            }
+        }
+        mock_get.return_value = mock_resp
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, app_module.META_FILE)
+            initial_meta = { "expiresAt": "2027-03-10T20:55:39.663Z" }
+            with open(meta_path, 'w') as f: json.dump(initial_meta, f)
+
+            with patch('app.DATA_DIR', tmp_dir):
+                client.get('/api/subscription/hash1')
+                with open(meta_path, 'r') as f:
+                    assert json.load(f)['expiresAt'] == "2027-04-10T20:55:39.663Z"
+
+        # Case 2: Renewal format (flat structure with newExpiry)
+        mock_resp.content = json.dumps({
+            "status": "paid",
+            "oldExpiry": "2027-04-10T20:55:39.663Z",
+            "newExpiry": "2027-05-10T20:55:39.663Z"
+        }).encode('utf-8')
+        mock_resp.json.return_value = {
+            "status": "paid",
+            "oldExpiry": "2027-04-10T20:55:39.663Z",
+            "newExpiry": "2027-05-10T20:55:39.663Z"
+        }
+        
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, app_module.META_FILE)
+            initial_meta = { "expiresAt": "2027-04-10T20:55:39.663Z" }
+            with open(meta_path, 'w') as f: json.dump(initial_meta, f)
+
+            with patch('app.DATA_DIR', tmp_dir):
+                client.get('/api/subscription/hash2')
+                with open(meta_path, 'r') as f:
+                    assert json.load(f)['expiresAt'] == "2027-05-10T20:55:39.663Z"
+
+    @patch('app.requests.get')
+    def test_check_subscription_preserves_new_expiry_when_subscription_exists(self, mock_get, client):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_resp.content = json.dumps({
+            "status": "paid",
+            "subscription": {},
+            "newExpiry": "2027-06-10T20:55:39.663Z"
+        }).encode('utf-8')
+        mock_resp.json.return_value = {
+            "status": "paid",
+            "subscription": {},
+            "newExpiry": "2027-06-10T20:55:39.663Z"
+        }
+        mock_get.return_value = mock_resp
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, app_module.META_FILE)
+            with open(meta_path, 'w') as f:
+                json.dump({"expiresAt": "2027-05-10T20:55:39.663Z"}, f)
+
+            with patch('app.DATA_DIR', tmp_dir):
+                res = client.get('/api/subscription/hash3')
+                assert res.status_code == 200
+                with open(meta_path, 'r') as f:
+                    assert json.load(f)['expiresAt'] == "2027-06-10T20:55:39.663Z"
+
+    @patch('app.requests.get')
+    @patch('app._update_local_metadata')
+    def test_check_subscription_handles_non_object_response(self, mock_update_metadata, mock_get, client):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_resp.content = b"[]"
+        mock_resp.json.return_value = []
+        mock_get.return_value = mock_resp
+
+        res = client.get('/api/subscription/hash-edge')
+
+        assert res.status_code == 200
+        assert res.data == b"[]"
+        mock_update_metadata.assert_not_called()
+
+    @patch('app.requests.get')
+    def test_check_subscription_ignores_invalid_metadata_shape(self, mock_get, client):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_resp.content = json.dumps({
+            "status": "paid",
+            "subscription": {
+                "expiresAt": "2027-04-10T20:55:39.663Z"
+            }
+        }).encode('utf-8')
+        mock_resp.json.return_value = {
+            "status": "paid",
+            "subscription": {
+                "expiresAt": "2027-04-10T20:55:39.663Z"
+            }
+        }
+        mock_get.return_value = mock_resp
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            meta_path = os.path.join(tmp_dir, app_module.META_FILE)
+            with open(meta_path, 'w') as f:
+                json.dump([], f)
+
+            with patch('app.DATA_DIR', tmp_dir):
+                res = client.get('/api/subscription/hash-invalid-meta')
+                assert res.status_code == 200
+                with open(meta_path, 'r') as f:
+                    assert json.load(f) == []
+
+
+class TestMetadataSync:
+    def test_update_local_metadata_skips_when_file_missing(self, client, data_dir):
+        """Verifies that _update_local_metadata does not create a sparse file when it's missing."""
+        from app import _update_local_metadata
+        meta_path = os.path.join(data_dir, app_module.META_FILE)
+        assert not os.path.exists(meta_path)
+        
+        # Call with some data
+        sync_data = {"expiresAt": "2026-05-01T12:00:00Z"}
+        result = _update_local_metadata(sync_data, payment_hash="hash123")
+        
+        assert result is False
+        assert not os.path.exists(meta_path), "Should not create a sparse metadata file"
+
+    def test_update_local_metadata_skips_when_metadata_not_object(self, client, data_dir):
+        from app import _update_local_metadata
+        meta_path = os.path.join(data_dir, app_module.META_FILE)
+        with open(meta_path, 'w') as f:
+            json.dump([], f)
+
+        result = _update_local_metadata({"expiresAt": "2026-05-01T12:00:00Z"}, payment_hash="hash123")
+
+        assert result is False
+        with open(meta_path, 'r') as f:
+            assert json.load(f) == []
+
+    def test_update_local_metadata_prefers_new_expiry_over_expires_at(self, client, data_dir):
+        from app import _update_local_metadata
+        meta_path = os.path.join(data_dir, app_module.META_FILE)
+        with open(meta_path, 'w') as f:
+            json.dump({"expiresAt": "2027-01-01T00:00:00Z"}, f)
+
+        result = _update_local_metadata(
+            {"expiresAt": "2027-01-01T00:00:00Z", "newExpiry": "2027-02-01T00:00:00Z"},
+            payment_hash="hash123"
+        )
+
+        assert result is True
+        with open(meta_path, 'r') as f:
+            meta = json.load(f)
+        assert meta["expiresAt"] == "2027-02-01T00:00:00Z"

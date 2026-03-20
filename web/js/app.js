@@ -357,6 +357,10 @@ function switchTab(tabId) {
         clearInterval(pollInterval);
         pollInterval = null;
     }
+
+    if (tabId === 'dashboard') {
+        fetchStatus();
+    }
     ['buy', 'renew'].forEach(mode => {
         const box = document.getElementById(`invoice-box-${mode}`);
         const btnCreate = document.getElementById(`btn-create-${mode}`);
@@ -794,6 +798,9 @@ async function pollPayment() {
                 const p = document.createElement('p');
                 p.className = 'text-sm text-gray-300 text-center mb-4';
                 p.textContent = 'Your VPN subscription has been extended successfully. No restarts required.';
+
+                // Trigger UI refresh to show new expiry date
+                fetchStatus();
 
                 const button = document.createElement('button');
                 button.className = 'mt-4 w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-2 px-6 rounded transition shadow-lg';
