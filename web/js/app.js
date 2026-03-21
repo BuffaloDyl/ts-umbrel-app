@@ -547,7 +547,8 @@ async function fetchStatus() {
 
         // Note: renew-pubkey is populated via /api/local/meta on tab switch instead.
 
-        let confs = data.configs_found.length > 0 ? data.configs_found.join(", ") : "None Detected";
+        const configsArr = data.configs_found || [];
+        let confs = configsArr.length > 0 ? configsArr.join(", ") : "None Detected";
         const configsEl = document.getElementById('txt-configs');
         if (configsEl) {
             configsEl.replaceChildren(document.createTextNode(confs));
@@ -603,8 +604,10 @@ async function fetchStatus() {
             bannerDots.classList.add('hidden');
         }
 
+        return data;
     } catch (e) {
         console.error("Failed to fetch status", e);
+        return null;
     }
 }
 
@@ -791,7 +794,7 @@ async function pollPayment() {
         if (data.status === 'paid') {
             clearInterval(pollInterval);
             const invoiceBox = document.getElementById(`invoice-box-${purchaseMode}`);
-            invoiceBox.innerHTML = ''; // Clear content
+            invoiceBox.replaceChildren(); // Clear content
 
             if (purchaseMode === 'buy') {
                 // Celebration SVG (safely parsed to avoid innerHTML AST warnings)
@@ -824,10 +827,10 @@ async function pollPayment() {
                 const button = document.createElement('button');
                 button.className = 'mt-4 w-full bg-tsgreen hover:bg-cyan-500 text-gray-900 font-bold py-2 px-6 rounded transition shadow-lg';
                 button.textContent = 'Proceed to Installation';
-                button.onclick = () => {
+                button.addEventListener('click', () => {
                     document.getElementById('pending-install-section').classList.remove('hidden');
                     switchTab('import');
-                };
+                });
 
                 invoiceBox.append(celebrationSvg, h3, p, button);
             } else {
@@ -847,7 +850,7 @@ async function pollPayment() {
                 const button = document.createElement('button');
                 button.className = 'mt-4 w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-2 px-6 rounded transition shadow-lg';
                 button.textContent = 'Return to Dashboard';
-                button.onclick = () => switchTab('dashboard');
+                button.addEventListener('click', () => switchTab('dashboard'));
 
                 invoiceBox.append(h3, p, button);
             }
@@ -867,13 +870,21 @@ async function claimSubscription(mode) {
         const res = await fetch('/api/subscription/claim', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paymentHash: activePaymentHash, referralCode: null })
+            body: JSON.stringify({ paymentHash: activePaymentHash, wgPublicKey: "", wgPresharedKey: "", referralCode: null })
         });
 
         const invoiceBox = document.getElementById(`invoice-box-${mode}`);
-        invoiceBox.innerHTML = '';
+        invoiceBox.replaceChildren();
+        
+        let data;
+        try {
+            data = await res.json();
+        } catch (e) {
+            console.warn("Failed to parse JSON response from claim");
+            data = { error: "Server returned an invalid response." };
+        }
 
-        if (res.ok) {
+        if (res.ok && data.success !== false && data.status !== "error") {
             const configMsg = "Node configuration will be available after dataplane setup.";
 
             const h3 = document.createElement('h3');
@@ -891,12 +902,28 @@ async function claimSubscription(mode) {
             const button = document.createElement('button');
             button.className = 'mt-4 w-full bg-tsyellow hover:bg-yellow-500 text-black font-bold py-2 px-6 rounded transition shadow-lg';
             button.textContent = 'Restart Apps & Tunnel';
-            button.onclick = () => {
-                restartTunnel();
-                document.getElementById('pending-install-section').classList.add('hidden');
-                activePaymentHash = null;
-                switchTab('dashboard');
-            };
+            button.addEventListener('click', async () => {
+                const ok = await restartTunnel({
+                    maxAttempts: 5,
+                    intervalMs: 2000,
+                    onConnected: () => {
+                        showToast("VPN tunnel is UP! Now configure your Lightning Node below.", "success");
+                        const configNodeInput = document.getElementById('node-type-selected');
+                        if (configNodeInput && configNodeInput.parentElement) {
+                            configNodeInput.parentElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }
+                    },
+                    onTimeout: () => {
+                        showToast("VPN restart requested, but connection verification timed out. Please check the dashboard.", "warning");
+                    }
+                });
+                if (ok) {
+                    document.getElementById('pending-install-section').classList.add('hidden');
+                    activePaymentHash = null;
+                } else {
+                    showToast("Restart request failed — please restart manually from the dashboard.", "error");
+                }
+            });
 
             if (btnInstall) btnInstall.classList.add('hidden'); // Hide the install button now
             invoiceBox.append(h3, p1, p2, button);
@@ -907,7 +934,7 @@ async function claimSubscription(mode) {
 
             const p = document.createElement('p');
             p.className = 'text-sm text-gray-300 text-center';
-            p.textContent = 'Payment was successful, but config provisioning failed.';
+            p.textContent = data.error || data.message || 'Payment was successful, but config provisioning failed.';
 
             invoiceBox.append(h3, p);
             if (btnInstall) {
@@ -1210,12 +1237,38 @@ async function importConfig() {
     }
 }
 
-async function restartTunnel() {
+async function pollUntilConnected(options = {}) {
+    const maxAttempts = Number.isInteger(options.maxAttempts) && options.maxAttempts > 0 ? options.maxAttempts : 5;
+    const intervalMs = Number.isInteger(options.intervalMs) && options.intervalMs > 0 ? options.intervalMs : 2000;
+    const onConnected = typeof options.onConnected === 'function' ? options.onConnected : null;
+    const onTimeout = typeof options.onTimeout === 'function' ? options.onTimeout : null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const status = await fetchStatus();
+        if (status && status.vpn_active === true) {
+            if (onConnected) onConnected(status);
+            return true;
+        }
+        if (attempt < maxAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, intervalMs));
+        }
+    }
+
+    if (onTimeout) onTimeout();
+    return false;
+}
+
+async function restartTunnel(pollOptions = {}) {
     try {
-        await fetch('/api/local/restart', { method: 'POST' });
-        // The container entrypoint will catch the trigger file, and restart `wg-quick`
-        setTimeout(fetchStatus, 3000);
-    } catch (e) { }
+        const res = await fetch('/api/local/restart', { method: 'POST' });
+        if (res.ok) {
+            // The container entrypoint will catch the trigger file, and restart `wg-quick`.
+            void pollUntilConnected(pollOptions);
+        }
+        return res.ok;
+    } catch (e) {
+        return false;
+    }
 }
 
 // Copy Invoice to Clipboard

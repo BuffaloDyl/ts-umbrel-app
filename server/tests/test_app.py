@@ -73,7 +73,7 @@ MOCK_CLAIM_RESPONSE = {
         "privateKey": "clientPrivateKeyBase64==",
         "presharedKey": "presharedKeyBase64=="
     },
-    "fullConfig": (
+    "config": (
         "# TunnelSats WireGuard Configuration\n"
         "# Server: de2.tunnelsats.com\n"
         "# Port Forwarding: 35825\n"
@@ -98,7 +98,7 @@ def _mock_claim_post(*args, **kwargs):
     mock_resp.status_code = 200
     mock_resp.json.return_value = MOCK_CLAIM_RESPONSE
     mock_resp.content = json.dumps(MOCK_CLAIM_RESPONSE).encode()
-    mock_resp.headers = {'Content-Type': 'application/json'}
+    mock_resp.headers = {"Content-Type": "application/json"}
     return mock_resp
 
 
@@ -106,8 +106,8 @@ class TestClaimSavesConfig:
     """Test that claim_subscription correctly intercepts and saves the config."""
 
     @patch('app.requests.post', side_effect=_mock_claim_post)
-    def test_claim_saves_conf_file_from_fullConfig(self, mock_post, client, data_dir):
-        """The .conf file must be written from the 'fullConfig' field."""
+    def test_claim_saves_conf_file_from_config(self, mock_post, client, data_dir):
+        """The .conf file must be written from the 'config' field."""
         res = client.post('/api/subscription/claim',
                           json={"paymentHash": "test-hash-123", "referralCode": None},
                           content_type='application/json')
@@ -118,12 +118,34 @@ class TestClaimSavesConfig:
         assert len(conf_files) == 1
         assert 'tunnelsats' in conf_files[0]
 
-        # Verify content matches fullConfig
+        # Verify content matches config
         with open(os.path.join(data_dir, conf_files[0])) as f:
             content = f.read()
         assert '[Interface]' in content
         assert 'clientPrivateKeyBase64==' in content
         assert '# Port Forwarding: 35825' in content
+
+    @patch('app.requests.post')
+    def test_claim_saves_conf_file_from_legacy_fullconfig_fallback(self, mock_post, client, data_dir):
+        """Legacy 'fullConfig' fallback should still be accepted."""
+        legacy_response = MOCK_CLAIM_RESPONSE.copy()
+        legacy_response["fullConfig"] = legacy_response["config"]
+        legacy_response.pop("config", None)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = legacy_response
+        mock_resp.content = json.dumps(legacy_response).encode()
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_post.return_value = mock_resp
+
+        res = client.post('/api/subscription/claim',
+                          json={"paymentHash": "test-hash-123", "referralCode": None},
+                          content_type='application/json')
+        assert res.status_code == 200
+
+        conf_files = [f for f in os.listdir(data_dir) if f.endswith('.conf')]
+        assert len(conf_files) == 1
 
     @patch('app.requests.post', side_effect=_mock_claim_post)
     def test_claim_saves_metadata_json(self, mock_post, client, data_dir):
@@ -190,6 +212,89 @@ class TestClaimSavesConfig:
         # The new config should exist
         new_confs = [f for f in os.listdir(data_dir) if f.endswith('.conf')]
         assert len(new_confs) == 1
+
+    @patch('app.requests.post')
+    def test_claim_returns_400_when_upstream_returns_status_error(self, mock_post, client, data_dir):
+        """If upstream returns 200 OK but status=error, proxy must fail loudly with 400."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"status": "error", "message": "Subscription already claimed"}
+        mock_resp.content = b'{"status": "error", "message": "Subscription already claimed"}'
+        mock_resp.headers = {'Content-Type': 'application/json'}
+        mock_post.return_value = mock_resp
+
+        res = client.post('/api/subscription/claim',
+                          json={"paymentHash": "test-hash-123", "referralCode": None},
+                          content_type='application/json')
+        
+        assert res.status_code == 400
+        assert b"Invalid upstream payload" in res.data or b"Already claimed" in res.data or b"Subscription already claimed" in res.data
+
+        # Ensure no config was saved
+        confs = [f for f in os.listdir(data_dir) if f.endswith('.conf')]
+        assert len(confs) == 0
+
+    @patch('app.requests.post')
+    def test_claim_returns_400_when_upstream_returns_success_false(self, mock_post, client, data_dir):
+        """If upstream returns 200 OK but success=False explicitly, proxy must fail loudly with 400."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"success": False, "status": "error", "message": "Subscription already claimed"}
+        mock_resp.content = b'{"success": false, "status": "error", "message": "Subscription already claimed"}'
+        mock_resp.headers = {'Content-Type': 'application/json'}
+        mock_post.return_value = mock_resp
+
+        res = client.post('/api/subscription/claim',
+                          json={"paymentHash": "test-hash-123", "referralCode": None},
+                          content_type='application/json')
+        
+        assert res.status_code == 400
+        assert b"Invalid upstream payload" in res.data or b"Already claimed" in res.data or b"Subscription already claimed" in res.data
+
+        # Ensure no config was saved
+        confs = [f for f in os.listdir(data_dir) if f.endswith('.conf')]
+        assert len(confs) == 0
+
+    @patch('app.requests.post')
+    def test_claim_returns_400_when_upstream_omits_config(self, mock_post, client, data_dir):
+        """If upstream returns 200 OK but omits all WireGuard config keys, proxy must fail with 400."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"status": "active", "message": "Success but no config", "subscription": {}}
+        mock_resp.content = b'{"status": "active", "message": "Success but no config", "subscription": {}}'
+        mock_resp.headers = {'Content-Type': 'application/json'}
+        mock_post.return_value = mock_resp
+
+        res = client.post('/api/subscription/claim',
+                          json={"paymentHash": "test-hash-123", "referralCode": None},
+                          content_type='application/json')
+        
+        assert res.status_code == 400
+        assert b"Invalid upstream payload" in res.data
+
+        # Ensure no config was saved
+        confs = [f for f in os.listdir(data_dir) if f.endswith('.conf')]
+        assert len(confs) == 0
+
+    @patch('app.requests.post')
+    def test_claim_returns_400_when_upstream_returns_non_object_json(self, mock_post, client, data_dir):
+        """If upstream returns JSON but not an object, claim endpoint should reject with 400."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = []
+        mock_resp.content = b"[]"
+        mock_resp.headers = {'Content-Type': 'application/json'}
+        mock_post.return_value = mock_resp
+
+        res = client.post('/api/subscription/claim',
+                          json={"paymentHash": "test-hash-123", "referralCode": None},
+                          content_type='application/json')
+
+        assert res.status_code == 400
+        assert b"Invalid upstream payload" in res.data
+
+        confs = [f for f in os.listdir(data_dir) if f.endswith('.conf')]
+        assert len(confs) == 0
 
 
 # --- Phase 1: Servers Proxy Test ---
@@ -317,6 +422,20 @@ class TestRenewEndpoint:
         call_kwargs = mock_post.call_args.kwargs
         assert call_kwargs['json']['serverId'] == 'new-server'
         assert call_kwargs['json']['wgPublicKey'] == 'newkey'
+
+    @patch('app.requests.post')
+    def test_renew_handles_non_object_json_body(self, mock_post, client):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.content = b'{"success": true}'
+        mock_resp.headers = {'Content-Type': 'application/json'}
+        mock_post.return_value = mock_resp
+
+        res = client.post('/api/subscription/renew', json=['invalid'])
+        assert res.status_code == 200
+
+        call_kwargs = mock_post.call_args.kwargs
+        assert call_kwargs['json'] == {}
 
 
 class TestDataplaneAndRegressionFixes:
@@ -1231,6 +1350,83 @@ class TestDataplaneAndRegressionFixes:
                 with open(meta_path, 'r') as f:
                     assert json.load(f) == []
 
+class TestFullE2E_Workflow:
+    @patch('app.requests.post')
+    @patch('app.requests.get')
+    @patch('app.docker_api')
+    @patch('app.docker_api_post')
+    @patch('app.subprocess.check_output')
+    def test_full_workflow(self, mock_subprocess, mock_docker_post, mock_docker_api, mock_get, mock_post, client, data_dir):
+        # 1. Create Sub
+        mock_post_create = MagicMock()
+        mock_post_create.status_code = 200
+        mock_post_create.json.return_value = {"invoice": "lnbc123", "paymentHash": "hash123"}
+        mock_post_create.headers = {'Content-Type': 'application/json'}
+        mock_post_create.content = b'{"invoice": "lnbc123", "paymentHash": "hash123"}'
+        
+        # Set up a side effect for POST to route to different responses based on url
+        def mock_post_side_effect(url, **kwargs):
+            if "claim" in url:
+                mock_post_claim = MagicMock()
+                mock_post_claim.status_code = 200
+                mock_post_claim.headers = {'Content-Type': 'application/json'}
+                mock_post_claim.json.return_value = {
+                    "success": True, 
+                    "message": "Claimed", 
+                    "config": "[Interface]\nPrivateKey = secret123\nAddress = 10.0.0.1/32\n\n[Peer]\nPublicKey = pub123\nEndpoint = wg.example.com:51820\nAllowedIPs = 0.0.0.0/0\n"
+                }
+                mock_post_claim.content = json.dumps(mock_post_claim.json.return_value).encode('utf-8')
+                return mock_post_claim
+            return mock_post_create
+            
+        mock_post.side_effect = mock_post_side_effect
+
+        res = client.post('/api/subscription/create', json={"serverId": "eu-de", "duration": 1})
+        assert res.status_code == 200
+        assert json.loads(res.data)["paymentHash"] == "hash123"
+
+        # 2. Poll Status (Paid)
+        mock_get_status = MagicMock()
+        mock_get_status.status_code = 200
+        mock_get_status.json.return_value = {"status": "paid", "isProvisioned": False}
+        mock_get_status.headers = {'Content-Type': 'application/json'}
+        mock_get_status.content = b'{"status": "paid", "isProvisioned": false}'
+        mock_get.return_value = mock_get_status
+
+        res = client.get('/api/subscription/hash123')
+        assert res.status_code == 200
+        assert json.loads(res.data)["status"] == "paid"
+
+        # 3. Claim Sub
+        res = client.post('/api/subscription/claim', json={"paymentHash": "hash123", "wgPublicKey": "", "wgPresharedKey": "", "referralCode": None})
+        assert res.status_code == 200
+
+        # Verify files were saved
+        conf_path = os.path.join(data_dir, "tunnelsats.conf")
+        meta_path = os.path.join(data_dir, app_module.META_FILE)
+        assert os.path.exists(conf_path)
+        assert os.path.exists(meta_path)
+        
+        with open(meta_path, 'r') as f:
+            meta = json.load(f)
+            assert meta["paymentHash"] == "hash123"
+
+        # 4. Trigger Restart
+        mock_docker_post.return_value = ({}, 200)
+        res = client.post('/api/local/restart')
+        assert res.status_code == 200
+
+        # 5. Status Check
+        mock_subprocess.return_value = b"interface: tunnelsatsv2\n  public key: pubKey123\n  private key: (hidden)\n  listening port: 51820\n"
+        
+        res = client.get('/api/local/status')
+        assert res.status_code == 200
+        status_data = json.loads(res.data)
+        assert status_data["wg_status"] == "Connected"
+        assert status_data["wg_pubkey"] == "pubKey123"
+        assert "tunnelsats.conf" in status_data["configs_found"]
+
+
 
 class TestMetadataSync:
     def test_update_local_metadata_skips_when_file_missing(self, client, data_dir):
@@ -1273,3 +1469,25 @@ class TestMetadataSync:
         with open(meta_path, 'r') as f:
             meta = json.load(f)
         assert meta["expiresAt"] == "2027-02-01T00:00:00Z"
+
+def test_claim_subscription_invalid_config(client, data_dir):
+    """Verify that claim_subscription returns 400 if the upstream config is malformed."""
+    malformed_response = MOCK_CLAIM_RESPONSE.copy()
+    malformed_response["config"] = "[Interface]\nPrivateKey = 123\n# Missing Peer block"
+    
+    with patch('app.requests.post') as mock_post:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = malformed_response
+        mock_resp.content = json.dumps(malformed_response).encode()
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_post.return_value = mock_resp
+        
+        res = client.post('/api/subscription/claim',
+                         json={"paymentHash": "abc"},
+                         headers={"Content-Type": "application/json"})
+        
+        assert res.status_code == 400
+        data = json.loads(res.data)
+        assert data["success"] is False
+        assert "Invalid upstream payload" in data["error"]

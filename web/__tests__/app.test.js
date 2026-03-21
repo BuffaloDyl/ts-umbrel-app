@@ -340,9 +340,66 @@ describe('Phase 1: pollPayment detects lowercase paid', () => {
             expect.objectContaining({
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ paymentHash: 'buy-hash-123', referralCode: null })
+                body: JSON.stringify({ paymentHash: 'buy-hash-123', wgPublicKey: '', wgPresharedKey: '', referralCode: null })
             })
         );
+    });
+
+    test('claimSubscription treats success payload with informational error field as success', async () => {
+        window.activePaymentHash = 'buy-hash-123';
+
+        global.fetch = jest.fn((url) => {
+            if (url === '/api/subscription/claim') {
+                return Promise.resolve({
+                    json: () => Promise.resolve({
+                        success: true,
+                        error: 'Deprecation notice: this field is informational only'
+                    }),
+                    ok: true
+                });
+            }
+            return Promise.resolve({ json: () => Promise.resolve({}), ok: true });
+        });
+
+        await window.claimSubscription('import');
+
+        const invoiceBox = document.getElementById('invoice-box-import');
+        expect(invoiceBox.textContent).toContain('Installation Complete!');
+        expect(invoiceBox.textContent).not.toContain('Provisioning Error');
+    });
+
+    test('restart failure keeps install section visible for retry and preserves payment hash', async () => {
+        window.activePaymentHash = 'buy-hash-123';
+        document.getElementById('pending-install-section').classList.remove('hidden');
+
+        global.fetch = jest.fn((url) => {
+            if (url === '/api/subscription/claim') {
+                return Promise.resolve({
+                    json: () => Promise.resolve({ success: true }),
+                    ok: true
+                });
+            }
+            if (url === '/api/local/restart') {
+                return Promise.resolve({
+                    json: () => Promise.resolve({ error: 'restart failed' }),
+                    ok: false
+                });
+            }
+            return Promise.resolve({ json: () => Promise.resolve({}), ok: true });
+        });
+
+        await window.claimSubscription('import');
+
+        const invoiceBox = document.getElementById('invoice-box-import');
+        const restartBtn = Array.from(invoiceBox.querySelectorAll('button'))
+            .find((btn) => btn.textContent.includes('Restart Apps & Tunnel'));
+        expect(restartBtn).toBeTruthy();
+
+        restartBtn.click();
+        await new Promise(process.nextTick);
+
+        expect(document.getElementById('pending-install-section').classList.contains('hidden')).toBe(false);
+        expect(window.activePaymentHash).toBe('buy-hash-123');
     });
 });
 
