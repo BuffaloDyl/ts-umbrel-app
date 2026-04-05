@@ -13,12 +13,14 @@ NC='\033[0m'
 
 LEAN=false
 if [[ "$*" == *"--lean"* ]]; then LEAN=true; fi
+ALLOW_SKIP=false
+if [[ "$*" == *"--allow-skip"* ]]; then ALLOW_SKIP=true; fi
 
 log_info() { if [ "$LEAN" = false ]; then echo -e "${GREEN}[INFO]${NC} $1"; fi; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 usage() {
-    echo "Usage: $0 [node|dataplane] [--lean]"
+    echo "Usage: $0 [node|dataplane] [--lean] [--allow-skip]"
     exit 1
 }
 
@@ -34,6 +36,11 @@ run_node_check() {
     # Simplified login/state check logic from verify_install.sh
     if ! command -v docker &> /dev/null; then log_error "Docker not found"; return 1; fi
     
+    if ! DOCKER_ERR=$(docker ps 2>&1); then
+        log_error "Docker access failed: $DOCKER_ERR"
+        return 1
+    fi
+
     CONTAINER_ID=$(docker ps -aqf "name=tunnelsats" | head -n 1)
     if [ -z "$CONTAINER_ID" ]; then
         log_error "TunnelSats container not found."
@@ -87,6 +94,7 @@ run_dataplane() {
     fi
 
     FAILED_TESTS=0
+    SKIPPED_TESTS=0
     check_result() {
         if [ $1 -eq 0 ]; then
             echo -e "${GREEN}PASS${NC} ($2)"
@@ -94,6 +102,10 @@ run_dataplane() {
             echo -e "${RED}FAIL${NC} ($2)"
             FAILED_TESTS=$((FAILED_TESTS + 1))
         fi
+    }
+    check_skipped() {
+        echo -e "${BLUE}SKIPPED${NC} ($1)"
+        SKIPPED_TESTS=$((SKIPPED_TESTS + 1))
     }
 
     # 2. Home IP 
@@ -107,11 +119,18 @@ run_dataplane() {
 
     # 3. Outbound Tunnel Verification
     echo -ne "${YELLOW}[1/3] Testing Outbound Tunnel Alignment...     ${NC} "
-    OUTBOUND=$(docker exec tunnelsats curl -sL --interface tunnelsatsv2 --max-time 10 ifconfig.me 2>/dev/null || echo "TIMEOUT")
-    if [[ "$OUTBOUND" == "$VPN_IP" ]]; then
-        check_result 0 "Verified via $VPN_IP"
+    EXEC_ERR=$(docker exec tunnelsats true 2>&1 || true)
+    if [ -z "$EXEC_ERR" ]; then
+        OUTBOUND=$(docker exec tunnelsats curl -sL --interface tunnelsatsv2 --max-time 10 ifconfig.me 2>/dev/null || echo "TIMEOUT")
+        if [[ "$OUTBOUND" == "$VPN_IP" ]]; then
+            check_result 0 "Verified via $VPN_IP"
+        else
+            check_result 1 "Leak/Timeout (Got: $OUTBOUND)"
+        fi
+    elif echo "$EXEC_ERR" | grep -qi "permission denied"; then
+        check_skipped "Requires sudo"
     else
-        check_result 1 "Leak/Timeout (Got: $OUTBOUND)"
+        check_result 1 "Container not found or not running"
     fi
 
     # 4. Inbound IP Test
@@ -131,13 +150,19 @@ run_dataplane() {
     fi
 
     echo -e "----------------------------------------------------------------"
-    if [ $FAILED_TESTS -gt 0 ]; then
+    if [ $FAILED_TESTS -gt 0 ] || { [ "$ALLOW_SKIP" = false ] && [ $SKIPPED_TESTS -gt 0 ]; }; then
         return 1
     fi
 }
 
-COMMAND="${1:-dataplane}"
-if [ "$COMMAND" = "--lean" ]; then COMMAND="dataplane"; fi
+COMMAND="dataplane"
+for arg in "$@"; do
+    case "$arg" in
+        node|dataplane) COMMAND="$arg" ;;
+        --lean|--allow-skip) ;;
+        *) usage ;;
+    esac
+done
 
 case "$COMMAND" in
     node) run_node_check ;;
