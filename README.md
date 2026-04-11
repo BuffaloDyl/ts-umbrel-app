@@ -12,7 +12,7 @@
 
 # TunnelSats for Umbrel
 
-This repository contains the containerized version of [TunnelSats](https://tunnelsats.com/) explicitly built for [umbrelOS 1.6+](https://github.com/getumbrel/umbrel) ☂️. 
+This repository contains the containerized version of [TunnelSats](https://tunnelsats.com/) optimized for [umbrelOS](https://github.com/getumbrel/umbrel) (fully compatible with both current and future versions). It is currently under review for the official native Umbrel App Store ☂️. 
 
 ## ⚡ What it Solves
 Running a Lightning Network node over Tor ensures privacy but introduces high latency and routing reliability issues. Conversely, running on Clearnet exposes your home IP address. 
@@ -24,6 +24,17 @@ By establishing a secure WireGuard tunnel to one of our global servers, your nod
 - **Buy & Renew In-App**: Purchase WireGuard subscriptions using Lightning right from the Umbrel dashboard.
 - **Docker-Native Routing**: Unlike previous iterations, this app dynamically routes your LND or Core-Lightning traffic over the VPN purely using Docker bridge networking and `nftables` DNAT.
 - **No Sudo Required**: You do not need to modify any host-level `umbrel/app-data` scripts or `docker-compose.yml` files!
+
+---
+
+## 📦 Installation via Community App Store
+
+While we await review for the official Umbrel App Store - Appreciate the upvote [here](https://github.com/getumbrel/umbrel-apps/pull/4919) - you can securely install the app today on any umbrelOS version via our Community Store:
+
+1. Open your Umbrel dashboard and go to the **App Store**.
+2. Click the **three dots** in the top right corner and select **Community App Stores**.
+3. Add our repository URL: `https://github.com/Tunnelsats/ts-umbrel-app`
+4. Install the **TunnelSats** app from the newly added community store.
 
 ---
 
@@ -65,7 +76,19 @@ The workspace uses a single **Source of Truth (SOT)** for backend tests, E2E dat
 cd web && npm test
 ```
 
-### Troubleshooting API
+### Troubleshooting & API
+- Run the available Inbound / Outbound Connection script:
+```bash
+sudo ~/umbrel/app-data/tunnelsats/scripts/verify.sh 
+=== TunnelSats Dataplane Verification ===
+Target: us3.tunnelsats.com (178.156.167.202) : 12345
+----------------------------------------------------------------
+[0/3] Discovering Home IP...                    PASS (123.456.789.101)
+[1/3] Testing Outbound Tunnel Alignment...      PASS (Verified via 178.156.167.202)
+[2/3] Testing Inbound Port (via IP)...          PASS (Connected to 178.156.167.202:12345)
+[3/3] Testing Inbound Port (via Hostname)...    PASS (Connected to us3.tunnelsats.com:12345)
+----------------------------------------------------------------
+```
 - Check `GET /api/local/status` first to view the current `dataplane_mode` and `wg_status`.
 - If `rules_synced` is `false`, inspect `last_error` in the JSON response.
 - **Trigger immediate Dataplane repair:**
