@@ -97,6 +97,13 @@ LND_RESTART_DELAY = 3  # Seconds to wait for middleware to generate umbrel-lnd.c
 LND_CONTAINER_PATTERN = r"^lightning[_-]lnd[_-]\d+$"
 LND_MIDDLEWARE_PATTERN = r"^lightning[_-]app[_-]\d+$"
 CLN_CONTAINER_PATTERN = r"(^|[_-])(core-lightning|clightning|lightningd)([_-]|$)"
+LIGHTNING_WIDGET_PORT = 3006
+LIGHTNING_WIDGET_TIMEOUT = 5
+LIGHTNING_WIDGET_PATHS = {
+    "bitcoin-wallet": "/v1/lnd/widgets/bitcoin-wallet",
+    "lightning-wallet": "/v1/lnd/widgets/lightning-wallet",
+    "lightning-stats": "/v1/lnd/widgets/lightning-stats",
+}
 
 ALLOWED_NETWORKS = (
     ip_network("127.0.0.0/8"),
@@ -961,6 +968,218 @@ def reconcile_result_success(result):
     return False
 
 
+def read_wireguard_status():
+    wg_status = "Disconnected"
+    wg_pubkey = ""
+    try:
+        output = subprocess.check_output(["wg", "show", "tunnelsatsv2"], stderr=subprocess.STDOUT).decode("utf-8")
+        if "interface: tunnelsatsv2" in output:
+            wg_status = "Connected"
+            for line in output.split("\n"):
+                if line.strip().startswith("public key:"):
+                    wg_pubkey = line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return wg_status, wg_pubkey
+
+
+def read_local_configs():
+    configs = []
+    if os.path.exists(DATA_DIR):
+        for fname in os.listdir(DATA_DIR):
+            if fname.endswith(".conf"):
+                configs.append(fname)
+    return configs
+
+
+def routing_flag_from_config(path, prefixes):
+    if not os.path.exists(path):
+        return False
+
+    try:
+        with open(path, "r", encoding="utf-8") as fp:
+            for line in fp:
+                stripped = line.lstrip()
+                if any(stripped.startswith(prefix) for prefix in prefixes):
+                    return True
+    except (IOError, OSError) as exc:
+        app.logger.warning(f"Failed to read config for routing detection at {path}: {exc}")
+
+    return False
+
+
+def read_vpn_internal_ip():
+    vpn_internal_ip = ""
+    try:
+        res = subprocess.run(
+            ["ip", "-4", "addr", "show", "dev", "tunnelsatsv2"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if res.returncode == 0:
+            if match := re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+)", res.stdout):
+                vpn_internal_ip = match.group(1)
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        pass
+    return vpn_internal_ip
+
+
+def read_tunnelsats_metadata():
+    meta = {}
+    meta_path = os.path.join(DATA_DIR, META_FILE)
+    if not os.path.exists(meta_path):
+        return meta
+
+    try:
+        with open(meta_path, "r", encoding="utf-8") as fp:
+            loaded = json.load(fp)
+            if isinstance(loaded, dict):
+                meta = loaded
+    except (IOError, OSError, json.JSONDecodeError) as exc:
+        app.logger.warning(f"Failed to read or parse metadata file {meta_path}: {exc}")
+
+    return meta
+
+
+def collect_local_status():
+    wg_status, wg_pubkey = read_wireguard_status()
+    configs = read_local_configs()
+
+    dataplane = read_dataplane_state()
+    containers = docker_api("/containers/json?all=0") or []
+    lnd_ip = container_ip_by_match(LND_CONTAINER_PATTERN, containers=containers)
+    cln_ip = container_ip_by_match(CLN_CONTAINER_PATTERN, containers=containers)
+
+    vpn_active = wg_status == "Connected"
+    lnd_detected = bool(container_ids_by_match(LND_CONTAINER_PATTERN, containers=containers))
+    cln_detected = bool(container_ids_by_match(CLN_CONTAINER_PATTERN, containers=containers))
+    lnd_routing_active = routing_flag_from_config(LND_CONFIG_PATH, ("externalhosts=",))
+    cln_routing_active = routing_flag_from_config(CLN_CONFIG_PATH, ("announce-addr=",))
+
+    vpn_internal_ip = read_vpn_internal_ip()
+    meta = read_tunnelsats_metadata()
+    server_domain = str(meta.get("serverDomain", ""))
+    expires_at = str(meta.get("expiresAt", ""))
+    vpn_port = meta.get("vpnPort", "")
+
+    lat, lng, label, flag = None, None, None, None
+    if server_domain:
+        s_id = server_domain.split(".")[0]
+        geodata = get_server_geodata(s_id)
+        if geodata:
+            lat = geodata["lat"]
+            lng = geodata["lng"]
+            label = geodata["label"]
+            flag = geodata["flag"]
+
+    return {
+        "wg_status": wg_status,
+        "wg_pubkey": wg_pubkey,
+        "vpn_internal_ip": vpn_internal_ip,
+        "configs_found": configs,
+        "version": read_app_version(),
+        "lnd_ip": lnd_ip,
+        "cln_ip": cln_ip,
+        "vpn_active": vpn_active,
+        "lnd_detected": lnd_detected,
+        "cln_detected": cln_detected,
+        "lnd_routing_active": lnd_routing_active,
+        "cln_routing_active": cln_routing_active,
+        "server_domain": server_domain,
+        "lat": lat,
+        "lng": lng,
+        "label": label,
+        "flag": flag,
+        "expires_at": expires_at,
+        "vpn_port": vpn_port,
+        "dataplane_mode": dataplane["dataplane_mode"],
+        "target_container": dataplane["target_container"],
+        "target_ip": dataplane["target_ip"],
+        "target_impl": dataplane["target_impl"],
+        "docker_network": dataplane["docker_network"],
+        "forwarding_port": dataplane["forwarding_port"],
+        "rules_synced": dataplane["rules_synced"],
+        "last_reconcile_at": dataplane["last_reconcile_at"],
+        "last_error": dataplane["last_error"],
+    }
+
+
+def get_tunnel_status_summary(status_data):
+    lnd_routing_active = bool(status_data.get("lnd_routing_active"))
+    cln_routing_active = bool(status_data.get("cln_routing_active"))
+    target_impl = str(status_data.get("target_impl", "")).strip().lower()
+
+    node_type = "LND" if lnd_routing_active else "CLN" if cln_routing_active else ""
+    if not node_type and target_impl in ("lnd", "cln"):
+        node_type = target_impl.upper()
+
+    if status_data.get("vpn_active") and (lnd_routing_active or cln_routing_active):
+        state = "Protected"
+    elif status_data.get("vpn_active"):
+        state = "Connected"
+    else:
+        state = "Tunnel Down"
+
+    compact_base = state if state == "Tunnel Down" else f"Tunnel {state}"
+    return {
+        "state": state,
+        "node_type": node_type or "None",
+        "compact": compact_base if not node_type else f"{compact_base} ({node_type})",
+    }
+
+
+def get_lightning_widget_base_url():
+    containers = docker_api("/containers/json?all=0") or []
+    lightning_ip = container_ip_by_match(LND_MIDDLEWARE_PATTERN, containers=containers)
+    if lightning_ip:
+        return f"http://{lightning_ip}:{LIGHTNING_WIDGET_PORT}"
+    return f"http://127.0.0.1:{LIGHTNING_WIDGET_PORT}"
+
+
+def fetch_lightning_widget_data(widget_id):
+    widget_path = LIGHTNING_WIDGET_PATHS.get(widget_id)
+    if not widget_path:
+        raise ValueError(f"Unsupported widget_id: {widget_id}")
+
+    widget_url = f"{get_lightning_widget_base_url()}{widget_path}"
+    response = requests.get(widget_url, timeout=LIGHTNING_WIDGET_TIMEOUT)
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("Lightning widget endpoint returned a non-object payload")
+    return payload
+
+
+def augment_widget_with_tunnel_status(widget_data, tunnel_summary):
+    payload = dict(widget_data)
+    compact = tunnel_summary["compact"]
+
+    if payload.get("type") == "text-with-buttons":
+        subtext = str(payload.get("subtext", "")).strip()
+        payload["subtext"] = f"{subtext} · {compact}" if subtext else compact
+        return payload
+
+    if payload.get("type") == "four-stats":
+        items = payload.get("items")
+        if isinstance(items, list) and items:
+            updated_items = []
+            for index, item in enumerate(items):
+                if not isinstance(item, dict):
+                    updated_items.append(item)
+                    continue
+                entry = dict(item)
+                if index == 0:
+                    subtext = str(entry.get("subtext", "")).strip()
+                    entry["subtext"] = f"{subtext} · {compact}" if subtext else compact
+                updated_items.append(entry)
+            payload["items"] = updated_items
+        return payload
+
+    payload["tunnelStatus"] = compact
+    return payload
+
+
 @app.before_request
 def restrict_local_api():
     if request.path.startswith("/api/local") or request.path == "/api/subscription/renew":
@@ -1245,129 +1464,25 @@ def renew_subscription():
 @app.route("/api/local/status", methods=["GET"])
 def local_status():
     app.logger.debug("Action Request: Fetching local status")
-    wg_status = "Disconnected"
-    wg_pubkey = ""
+    return jsonify(collect_local_status())
+
+
+@app.route("/api/local/widgets/<widget_id>", methods=["GET"])
+def local_widget(widget_id):
+    if widget_id not in LIGHTNING_WIDGET_PATHS:
+        return jsonify({"error": "Unknown widget"}), 404
+
     try:
-        output = subprocess.check_output(["wg", "show", "tunnelsatsv2"], stderr=subprocess.STDOUT).decode("utf-8")
-        if "interface: tunnelsatsv2" in output:
-            wg_status = "Connected"
-            for line in output.split("\n"):
-                if line.strip().startswith("public key:"):
-                    wg_pubkey = line.split(":", 1)[1].strip()
-    except Exception:
-        pass
-
-    configs = []
-    if os.path.exists(DATA_DIR):
-        for fname in os.listdir(DATA_DIR):
-            if fname.endswith(".conf"):
-                configs.append(fname)
-
-    dataplane = read_dataplane_state()
-    containers = docker_api("/containers/json?all=0") or []
-    lnd_ip = container_ip_by_match(LND_CONTAINER_PATTERN, containers=containers)
-    cln_ip = container_ip_by_match(CLN_CONTAINER_PATTERN, containers=containers)
-
-    # Granular state detection
-    vpn_active = (wg_status == "Connected")
-    lnd_detected = bool(container_ids_by_match(LND_CONTAINER_PATTERN, containers=containers))
-    cln_detected = bool(container_ids_by_match(CLN_CONTAINER_PATTERN, containers=containers))
-
-    lnd_routing_active = False
-    if os.path.exists(LND_CONFIG_PATH):
-        try:
-            with open(LND_CONFIG_PATH, "r", encoding="utf-8") as f:
-                for line in f:
-                    if line.lstrip().startswith("externalhosts="):
-                        lnd_routing_active = True
-                        break
-        except (IOError, OSError) as exc:
-            app.logger.warning(f"Failed to read LND config for routing detection: {exc}")
-
-    cln_routing_active = False
-    if os.path.exists(CLN_CONFIG_PATH):
-        try:
-            with open(CLN_CONFIG_PATH, "r", encoding="utf-8") as f:
-                for line in f:
-                    if line.lstrip().startswith("announce-addr="):
-                        cln_routing_active = True
-                        break
-        except (IOError, OSError) as exc:
-            app.logger.warning(f"Failed to read CLN config for routing detection: {exc}")
-
-    # Dynamic Internal IP Recovery
-    vpn_internal_ip = ""
-    try:
-        # Source of Truth: the live interface state. 
-        # check=False in subprocess.run is more robust than check_output if "ip" is missing.
-        res = subprocess.run(["ip", "-4", "addr", "show", "dev", "tunnelsatsv2"], 
-                             capture_output=True, text=True, timeout=2)
-        if res.returncode == 0:
-            if match := re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+)", res.stdout):
-                vpn_internal_ip = match.group(1)
-    except (subprocess.SubprocessError, FileNotFoundError, OSError):
-        # Handle cases where "ip" is missing or dev doesn't exist gracefully
-        pass
-
-    server_domain = ""
-    expires_at = ""
-    vpn_port = ""
-    meta_path = os.path.join(DATA_DIR, META_FILE)
-    if os.path.exists(meta_path):
-        try:
-            with open(meta_path, "r", encoding="utf-8") as fp:
-                meta = json.load(fp)
-                server_domain = meta.get("serverDomain", "")
-                expires_at = meta.get("expiresAt", "")
-                vpn_port = meta.get("vpnPort", "")
-        except (IOError, OSError, json.JSONDecodeError) as exc:
-            app.logger.warning(f"Failed to read or parse metadata file {meta_path}: {exc}")
-            pass
-
-    # Enrich with location metadata using unified helper
-    lat, lng, label, flag = None, None, None, None
-    if server_domain:
-        s_id = server_domain.split(".")[0]
-        meta = get_server_geodata(s_id)
-        
-        if meta:
-            lat = meta["lat"]
-            lng = meta["lng"]
-            label = meta["label"]
-            flag = meta["flag"]
-
-    return jsonify(
-        {
-            "wg_status": wg_status,
-            "wg_pubkey": wg_pubkey,
-            "vpn_internal_ip": vpn_internal_ip,
-            "configs_found": configs,
-            "version": read_app_version(),
-            "lnd_ip": lnd_ip,
-            "cln_ip": cln_ip,
-            "vpn_active": vpn_active,
-            "lnd_detected": lnd_detected,
-            "cln_detected": cln_detected,
-            "lnd_routing_active": lnd_routing_active,
-            "cln_routing_active": cln_routing_active,
-            "server_domain": server_domain,
-            "lat": lat,
-            "lng": lng,
-            "label": label,
-            "flag": flag,
-            "expires_at": expires_at,
-            "vpn_port": vpn_port,
-            "dataplane_mode": dataplane["dataplane_mode"],
-            "target_container": dataplane["target_container"],
-            "target_ip": dataplane["target_ip"],
-            "target_impl": dataplane["target_impl"],
-            "docker_network": dataplane["docker_network"],
-            "forwarding_port": dataplane["forwarding_port"],
-            "rules_synced": dataplane["rules_synced"],
-            "last_reconcile_at": dataplane["last_reconcile_at"],
-            "last_error": dataplane["last_error"],
-        }
-    )
+        widget_data = fetch_lightning_widget_data(widget_id)
+        status_data = collect_local_status()
+        payload = augment_widget_with_tunnel_status(widget_data, get_tunnel_status_summary(status_data))
+        return jsonify(payload)
+    except requests.RequestException as exc:
+        app.logger.warning(f"Failed to fetch upstream Lightning widget {widget_id}: {exc}")
+        return jsonify({"error": f"Unable to reach Lightning widget endpoint for {widget_id}"}), 502
+    except ValueError as exc:
+        app.logger.warning(f"Invalid widget response for {widget_id}: {exc}")
+        return jsonify({"error": str(exc)}), 502
 
 
 @app.route("/api/local/upload-config", methods=["POST"])

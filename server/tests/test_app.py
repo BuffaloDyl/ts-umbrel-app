@@ -6,6 +6,8 @@ import pytest
 import json
 import stat
 import tempfile
+import requests
+import yaml
 from unittest.mock import patch, MagicMock
 from app import app
 import app as app_module
@@ -1556,3 +1558,116 @@ def test_claim_subscription_invalid_config(client, data_dir):
         data = json.loads(res.data)
         assert data["success"] is False
         assert "Invalid upstream payload" in data["error"]
+
+
+class TestLocalWidgets:
+    def test_bitcoin_wallet_widget_appends_protected_tunnel_status(self, client):
+        widget_payload = {
+            "type": "text-with-buttons",
+            "refresh": "5s",
+            "title": "Bitcoin Wallet",
+            "text": "1,845,894",
+            "subtext": "sats",
+            "buttons": [
+                {"text": "Withdraw", "icon": "arrow-up-right", "link": "?action=send-bitcoin"},
+                {"text": "Deposit", "icon": "arrow-down-right", "link": "?action=receive-bitcoin"},
+            ],
+        }
+        status_payload = {
+            "vpn_active": True,
+            "lnd_routing_active": True,
+            "cln_routing_active": False,
+            "target_impl": "lnd",
+        }
+
+        with patch('app.fetch_lightning_widget_data', return_value=widget_payload), \
+             patch('app.collect_local_status', return_value=status_payload):
+            res = client.get('/api/local/widgets/bitcoin-wallet')
+
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert data["title"] == "Bitcoin Wallet"
+        assert data["text"] == "1,845,894"
+        assert data["subtext"] == "sats · Tunnel Protected (LND)"
+        assert data["buttons"] == widget_payload["buttons"]
+
+    def test_lightning_wallet_widget_appends_connected_status_without_node(self, client):
+        widget_payload = {
+            "type": "text-with-buttons",
+            "refresh": "2s",
+            "title": "Lightning Wallet",
+            "text": "762,248",
+            "subtext": "sats",
+            "buttons": [
+                {"text": "Send", "icon": "arrow-up-right", "link": "?action=send-lightning"},
+                {"text": "Receive", "icon": "arrow-down-right", "link": "?action=receive-lightning"},
+            ],
+        }
+        status_payload = {
+            "vpn_active": True,
+            "lnd_routing_active": False,
+            "cln_routing_active": False,
+            "target_impl": "",
+        }
+
+        with patch('app.fetch_lightning_widget_data', return_value=widget_payload), \
+             patch('app.collect_local_status', return_value=status_payload):
+            res = client.get('/api/local/widgets/lightning-wallet')
+
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert data["subtext"] == "sats · Tunnel Connected"
+
+    def test_lightning_stats_widget_appends_tunnel_status_to_first_stat(self, client):
+        widget_payload = {
+            "type": "four-stats",
+            "refresh": "5s",
+            "link": "",
+            "items": [
+                {"title": "Connections", "text": "5", "subtext": "peers"},
+                {"title": "Active channels", "text": "3", "subtext": "channels"},
+                {"title": "Max send", "text": "90K", "subtext": "sats"},
+                {"title": "Max receive", "text": "45K", "subtext": "sats"},
+            ],
+        }
+        status_payload = {
+            "vpn_active": False,
+            "lnd_routing_active": False,
+            "cln_routing_active": False,
+            "target_impl": "cln",
+        }
+
+        with patch('app.fetch_lightning_widget_data', return_value=widget_payload), \
+             patch('app.collect_local_status', return_value=status_payload):
+            res = client.get('/api/local/widgets/lightning-stats')
+
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert data["items"][0]["subtext"] == "peers · Tunnel Down (CLN)"
+        assert data["items"][1:] == widget_payload["items"][1:]
+
+    def test_widget_route_returns_502_when_upstream_lightning_widget_fails(self, client):
+        with patch('app.fetch_lightning_widget_data', side_effect=requests.RequestException("boom")):
+            res = client.get('/api/local/widgets/bitcoin-wallet')
+
+        assert res.status_code == 502
+        data = json.loads(res.data)
+        assert "Unable to reach Lightning widget endpoint" in data["error"]
+
+
+def test_manifest_includes_lightning_parity_widgets():
+    manifest_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "tunnelsats", "umbrel-app.yml")
+    )
+    with open(manifest_path, "r", encoding="utf-8") as fp:
+        manifest = yaml.safe_load(fp)
+
+    widgets = manifest.get("widgets", [])
+    assert [widget["id"] for widget in widgets] == [
+        "bitcoin-wallet",
+        "lightning-wallet",
+        "lightning-stats",
+    ]
+    assert widgets[0]["endpoint"] == "app:9739/api/local/widgets/bitcoin-wallet"
+    assert widgets[1]["endpoint"] == "app:9739/api/local/widgets/lightning-wallet"
+    assert widgets[2]["endpoint"] == "app:9739/api/local/widgets/lightning-stats"
