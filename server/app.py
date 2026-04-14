@@ -1011,6 +1011,24 @@ def serve_static(path):
 
 # --- API PROXY ROUTES ---
 
+# Short-lived server-side cache for subscription status checks to avoid redundant
+# 10s API timeouts on retries while maintaining authoritative Source of Truth (SOT).
+_SUBSCRIPTION_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+SUBSCRIPTION_CACHE_TTL = 600  # 10 minutes
+
+def _fetch_subscription_status_cached(wg_public_key: str) -> Optional[Dict[str, Any]]:
+    """Fetch subscription status with a short-lived internal cache."""
+    now = time.time()
+    if wg_public_key in _SUBSCRIPTION_CACHE:
+        cache_time, info = _SUBSCRIPTION_CACHE[wg_public_key]
+        if now - cache_time < SUBSCRIPTION_CACHE_TTL:
+            return info
+
+    info = _fetch_subscription_status(wg_public_key)
+    if info:
+        _SUBSCRIPTION_CACHE[wg_public_key] = (now, info)
+    return info
+
 def _is_timestamp_expired(timestamp_str: str) -> bool:
     """Checks if a given ISO timestamp string is in the past."""
     if not timestamp_str:
@@ -1439,19 +1457,9 @@ def upload_config():
         return jsonify({"success": False, "error": "Unable to derive public key from provided PrivateKey."}), 400
 
     confirm = payload.get("confirm", False)
-    # Use client-passed metadata if available (prevents double API calls while maintaining SOT)
-    passed_meta = payload.get("meta")
-
-    status_info = None
-    if not confirm:
-        status_info = _fetch_subscription_status(wg_public_key)
-    elif passed_meta:
-        # Reconstruct status_info from passed metadata to preserve SOT
-        status_info = {
-            "server_domain": passed_meta.get("serverDomain"),
-            "expiry": passed_meta.get("expiresAt")
-        }
-
+    # Always attempt authoritative status check via cache.
+    # This prevents redundant 10s waits on confirmation retries while keeping SOT in the backend.
+    status_info = _fetch_subscription_status_cached(wg_public_key)
     is_expired = False
     if status_info:
         # Check if the API explicitly says disabled or if expiration is past

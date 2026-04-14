@@ -1526,7 +1526,7 @@ async function importConfig() {
             res = await fetch('/api/local/upload-config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ config, confirm: true, meta: data.meta })
+                body: JSON.stringify({ config, confirm: true })
             });
             data = await res.json();
         }

@@ -12,6 +12,12 @@ import app as app_module
 
 # --- Fixtures ---
 
+@pytest.fixture(autouse=True)
+def clear_subscription_cache():
+    """Ensure the server-side subscription cache is cleared between every test to prevent isolation leaks."""
+    app_module._SUBSCRIPTION_CACHE.clear()
+    yield
+
 @pytest.fixture
 def client():
     app.config['TESTING'] = True
