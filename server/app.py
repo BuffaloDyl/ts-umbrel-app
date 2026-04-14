@@ -1435,6 +1435,8 @@ def upload_config():
         elif expiry_str:
             try:
                 expiry_dt = datetime.fromisoformat(expiry_str.replace("Z", "+00:00"))
+                if expiry_dt.tzinfo is None:
+                    expiry_dt = expiry_dt.replace(tzinfo=timezone.utc)
                 if expiry_dt < datetime.now(timezone.utc):
                     is_expired = True
             except ValueError:
@@ -1447,6 +1449,8 @@ def upload_config():
         if expires_at_parsed:
             try:
                 expiry_parsed_dt = datetime.fromisoformat(expires_at_parsed.replace("Z", "+00:00"))
+                if expiry_parsed_dt.tzinfo is None:
+                    expiry_parsed_dt = expiry_parsed_dt.replace(tzinfo=timezone.utc)
                 if expiry_parsed_dt < datetime.now(timezone.utc):
                     is_expired = True
             except ValueError:

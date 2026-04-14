@@ -145,19 +145,20 @@ run_promote() {
     sed -E "s@https://raw.githubusercontent.com/Tunnelsats/ts-umbrel-app/(master|main)/tunnelsats/@@g" "${TARGET_MANIFEST}" > "${TARGET_MANIFEST}.tmp" && mv "${TARGET_MANIFEST}.tmp" "${TARGET_MANIFEST}"
 
     # Remove trailing period from tagline
-    sed -E 's/^(tagline:.*)\\.$/\1/' "${TARGET_MANIFEST}" > "${TARGET_MANIFEST}.tmp" && mv "${TARGET_MANIFEST}.tmp" "${TARGET_MANIFEST}"
+    sed -E 's/^(tagline:.*)\.$/\1/' "${TARGET_MANIFEST}" > "${TARGET_MANIFEST}.tmp" && mv "${TARGET_MANIFEST}.tmp" "${TARGET_MANIFEST}"
 
-    # Inject submitter and submission PR URL
-    sed -E 's/^(website:.*)/\1\nsubmitter: Tunnelsats\nsubmission: https:\/\/github.com\/getumbrel\/umbrel-apps\/pull\/4919/' "${TARGET_MANIFEST}" > "${TARGET_MANIFEST}.tmp" && mv "${TARGET_MANIFEST}.tmp" "${TARGET_MANIFEST}"
+    # Inject submitter and submission PR URL (defaulting to the latest master PR if not provided)
+    SUBMISSION_URL="${SUBMISSION_URL:-https://github.com/getumbrel/umbrel-apps/pull/4919}"
+    sed -E "s@^(website:.*)@\1\nsubmitter: Tunnelsats\nsubmission: ${SUBMISSION_URL}@" "${TARGET_MANIFEST}" > "${TARGET_MANIFEST}.tmp" && mv "${TARGET_MANIFEST}.tmp" "${TARGET_MANIFEST}"
 
     # Clear releaseNotes
-    sed -i '/^releaseNotes:/,/^developer:/ { /^releaseNotes:/! { /^developer:/! d } }' "${TARGET_MANIFEST}"
-    sed -i 's/^releaseNotes:.*/releaseNotes: ""/' "${TARGET_MANIFEST}"
+    sed -e '/^releaseNotes:/,/^developer:/ { /^releaseNotes:/! { /^developer:/! d } }' \
+        -e 's/^releaseNotes:.*/releaseNotes: ""/' "${TARGET_MANIFEST}" > "${TARGET_MANIFEST}.tmp" && mv "${TARGET_MANIFEST}.tmp" "${TARGET_MANIFEST}"
 
     # Clear icon and gallery for monorepo submission
-    sed -i 's/^icon:.*/icon: ""/' "${TARGET_MANIFEST}"
-    sed -i '/^gallery:/,/^path:/ { /^gallery:/! { /^path:/! d } }' "${TARGET_MANIFEST}"
-    sed -i 's/^gallery:.*/gallery: []/' "${TARGET_MANIFEST}"
+    sed -e 's/^icon:.*/icon: ""/' \
+        -e '/^gallery:/,/^path:/ { /^gallery:/! { /^path:/! d } }' \
+        -e 's/^gallery:.*/gallery: []/' "${TARGET_MANIFEST}" > "${TARGET_MANIFEST}.tmp" && mv "${TARGET_MANIFEST}.tmp" "${TARGET_MANIFEST}"
 
     log_info "Promotion complete. Commit changes in ${UMBREL_APPS_DIR}."
 }

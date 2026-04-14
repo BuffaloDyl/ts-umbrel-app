@@ -1390,20 +1390,24 @@ function confirmExpiredImport(meta) {
 
         const details = document.createElement('div');
         details.className = 'bg-black/40 border border-gray-800 rounded-lg p-4 space-y-3 font-mono text-xs';
-        details.innerHTML = `
-            <div class="flex justify-between border-b border-gray-800 pb-2">
-                <span class="text-gray-500 uppercase">Subdomain</span>
-                <span class="text-white">${meta.serverDomain || 'N/A'}</span>
-            </div>
-            <div class="flex justify-between border-b border-gray-800 pb-2">
-                <span class="text-gray-500 uppercase">Expiration</span>
-                <span class="text-red-400">${meta.expiresAt || 'N/A'}</span>
-            </div>
-            <div class="flex flex-col gap-1">
-                <span class="text-gray-500 uppercase">WG Public Key</span>
-                <span class="text-gray-400 break-all">${meta.wgPublicKey || 'N/A'}</span>
-            </div>
-        `;
+
+        const addRow = (label, value, valueClass, isVertical = false) => {
+            const row = document.createElement('div');
+            row.className = isVertical ? 'flex flex-col gap-1' : 'flex justify-between border-b border-gray-800 pb-2';
+            const labelEl = document.createElement('span');
+            labelEl.className = 'text-gray-500 uppercase';
+            labelEl.textContent = label;
+            const valueEl = document.createElement('span');
+            valueEl.className = valueClass;
+            valueEl.textContent = value || 'N/A';
+            row.appendChild(labelEl);
+            row.appendChild(valueEl);
+            details.appendChild(row);
+        };
+
+        addRow('Subdomain', meta.serverDomain, 'text-white');
+        addRow('Expiration', meta.expiresAt, 'text-red-400');
+        addRow('WG Public Key', meta.wgPublicKey, 'text-gray-400 break-all', true);
 
         const actions = document.createElement('div');
         actions.className = 'mt-8 flex justify-end gap-3';
