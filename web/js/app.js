@@ -1144,7 +1144,7 @@ async function confirmRestartModal(nodeType) {
 
         const overlay = document.createElement('div');
         overlay.id = 'restart-confirmation-modal';
-        overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm transition-opacity duration-300';
+        overlay.className = 'absolute inset-0 z-50 flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm transition-opacity duration-300';
 
         const panel = document.createElement('div');
         panel.className = 'w-full max-w-md rounded-2xl border border-gray-700/50 bg-gray-950 p-8 shadow-[0_20px_50px_rgba(0,0,0,0.5)] transform transition-all duration-300 scale-95 opacity-0';
@@ -1192,7 +1192,7 @@ async function confirmRestartModal(nodeType) {
         actions.append(cancelBtn, confirmBtn);
         panel.append(title, body, actions);
         overlay.appendChild(panel);
-        document.body.appendChild(overlay);
+        (document.getElementById('app-shell') || document.body).appendChild(overlay);
 
         // Animate in
         setTimeout(() => {
@@ -1307,7 +1307,7 @@ function confirmOverwriteImport() {
 
         const overlay = document.createElement('div');
         overlay.id = 'import-overwrite-modal';
-        overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4';
+        overlay.className = 'absolute inset-0 z-50 flex items-center justify-center bg-black/70 px-4';
 
         const panel = document.createElement('div');
         panel.className = 'w-full max-w-md rounded-xl border border-gray-700 bg-gray-900 p-6 shadow-2xl';
@@ -1336,7 +1336,7 @@ function confirmOverwriteImport() {
         actions.append(cancelBtn, confirmBtn);
         panel.append(title, body, actions);
         overlay.appendChild(panel);
-        document.body.appendChild(overlay);
+        (document.getElementById('app-shell') || document.body).appendChild(overlay);
 
         let settled = false;
         const complete = (choice) => {
@@ -1352,6 +1352,90 @@ function confirmOverwriteImport() {
             if (event.target === overlay) {
                 complete(false);
             }
+        });
+
+        confirmBtn.focus();
+    });
+}
+
+function confirmExpiredImport(meta) {
+    return new Promise((resolve) => {
+        const existingModal = document.getElementById('import-expired-modal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+
+        const overlay = document.createElement('div');
+        overlay.id = 'import-expired-modal';
+        overlay.className = 'absolute inset-0 z-50 flex items-center justify-center bg-black/70 px-4';
+
+        const panel = document.createElement('div');
+        panel.className = 'w-full max-w-lg rounded-xl border border-red-900/50 bg-gray-900 p-6 shadow-2xl';
+
+        const title = document.createElement('div');
+        title.className = 'flex items-center gap-3 text-red-500 mb-4';
+        title.innerHTML = `
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+            </svg>
+            <h3 class="text-lg font-bold">Expired Configuration Detected</h3>
+        `;
+
+        const body = document.createElement('div');
+        body.className = 'space-y-4';
+
+        const desc = document.createElement('p');
+        desc.className = 'text-sm text-gray-300 leading-relaxed';
+        desc.textContent = "The subscription for this configuration has expired. You can still import it and proceed directly to the renewal section to extend it.";
+
+        const details = document.createElement('div');
+        details.className = 'bg-black/40 border border-gray-800 rounded-lg p-4 space-y-3 font-mono text-xs';
+        details.innerHTML = `
+            <div class="flex justify-between border-b border-gray-800 pb-2">
+                <span class="text-gray-500 uppercase">Subdomain</span>
+                <span class="text-white">${meta.serverDomain || 'N/A'}</span>
+            </div>
+            <div class="flex justify-between border-b border-gray-800 pb-2">
+                <span class="text-gray-500 uppercase">Expiration</span>
+                <span class="text-red-400">${meta.expiresAt || 'N/A'}</span>
+            </div>
+            <div class="flex flex-col gap-1">
+                <span class="text-gray-500 uppercase">WG Public Key</span>
+                <span class="text-gray-400 break-all">${meta.wgPublicKey || 'N/A'}</span>
+            </div>
+        `;
+
+        const actions = document.createElement('div');
+        actions.className = 'mt-8 flex justify-end gap-3';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'rounded-lg border border-gray-600 px-4 py-2 text-sm font-semibold text-gray-200 hover:bg-gray-800';
+        cancelBtn.textContent = 'Abort';
+
+        const confirmBtn = document.createElement('button');
+        confirmBtn.type = 'button';
+        confirmBtn.className = 'rounded-lg bg-tsyellow px-4 py-2 text-sm font-bold text-black hover:bg-yellow-400 transition-colors shadow-lg shadow-yellow-500/10';
+        confirmBtn.textContent = 'Continue & Renew';
+
+        actions.append(cancelBtn, confirmBtn);
+        body.append(desc, details, actions);
+        panel.append(title, body);
+        overlay.appendChild(panel);
+        (document.getElementById('app-shell') || document.body).appendChild(overlay);
+
+        let settled = false;
+        const complete = (choice) => {
+            if (settled) return;
+            settled = true;
+            overlay.remove();
+            resolve(choice);
+        };
+
+        cancelBtn.addEventListener('click', () => complete(false));
+        confirmBtn.addEventListener('click', () => complete(true));
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) complete(false);
         });
 
         confirmBtn.focus();
@@ -1404,16 +1488,44 @@ async function importConfig() {
     setImportMessage("Importing...", 'info');
 
     try {
-        const res = await fetch('/api/local/upload-config', {
+        let res = await fetch('/api/local/upload-config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ config })
         });
 
-        const data = await res.json();
+        let data = await res.json();
+
+        // Authoritative sync: Handle expired config warning
+        if (data.success && data.warning === 'Expired' && data.is_expired) {
+            const confirmed = await confirmExpiredImport(data.meta);
+            if (!confirmed) {
+                setImportMessage("Import cancelled.", 'info');
+                return;
+            }
+
+            // Retry with confirm=true
+            setImportMessage("Saving expired config...", 'info');
+            res = await fetch('/api/local/upload-config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config, confirm: true })
+            });
+            data = await res.json();
+        }
+
         if (res.ok && data.success !== false) {
             setImportMessage(data.message || "Configuration saved and parsed.", 'success');
-            setTimeout(() => switchTab('import'), 1500);
+            
+            // If it was an expired config, move to renew tab after a short delay
+            if (data.is_expired) {
+                setTimeout(() => {
+                    switchTab('renew');
+                    setImportMessage("Subscription expired. Please renew below.", 'error');
+                }, 1500);
+            } else {
+                setTimeout(() => switchTab('import'), 1500);
+            }
         } else {
             setImportMessage(data.error || "Import failed.", 'error');
         }
