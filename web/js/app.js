@@ -1200,7 +1200,7 @@ async function confirmRestartModal(nodeType) {
         actions.append(cancelBtn, confirmBtn);
         panel.append(title, body, actions);
         overlay.appendChild(panel);
-        (document.getElementById('app-shell') || document.body).appendChild(overlay);
+        getAppShell().appendChild(overlay);
 
         // Animate in
         setTimeout(() => {
@@ -1344,7 +1344,7 @@ function confirmOverwriteImport() {
         actions.append(cancelBtn, confirmBtn);
         panel.append(title, body, actions);
         overlay.appendChild(panel);
-        (document.getElementById('app-shell') || document.body).appendChild(overlay);
+        getAppShell().appendChild(overlay);
 
         let settled = false;
         const complete = (choice) => {
@@ -1447,7 +1447,7 @@ function confirmExpiredImport(meta) {
         body.append(desc, details, actions);
         panel.append(title, body);
         overlay.appendChild(panel);
-        (document.getElementById('app-shell') || document.body).appendChild(overlay);
+        getAppShell().appendChild(overlay);
 
         let settled = false;
         const complete = (choice) => {

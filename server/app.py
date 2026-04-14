@@ -1013,7 +1013,7 @@ def serve_static(path):
 
 # Short-lived server-side cache for subscription status checks to avoid redundant
 # 10s API timeouts on retries while maintaining authoritative Source of Truth (SOT).
-_SUBSCRIPTION_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_SUBSCRIPTION_CACHE: Dict[str, Tuple[float, Optional[Dict[str, Any]]]] = {}
 SUBSCRIPTION_CACHE_TTL = 600  # 10 minutes
 
 def _fetch_subscription_status_cached(wg_public_key: str) -> Optional[Dict[str, Any]]:
@@ -1027,6 +1027,10 @@ def _fetch_subscription_status_cached(wg_public_key: str) -> Optional[Dict[str, 
     info = _fetch_subscription_status(wg_public_key)
     if info:
         _SUBSCRIPTION_CACHE[wg_public_key] = (now, info)
+    else:
+        # Negative Caching: Cache failures for 1 minute to avoid repeated 10s timeouts on retries.
+        # We store this by setting the cache timestamp to be close to expiration (1 minute left).
+        _SUBSCRIPTION_CACHE[wg_public_key] = (now - SUBSCRIPTION_CACHE_TTL + 60, None)
     return info
 
 def _is_timestamp_expired(timestamp_str: str) -> bool:
@@ -1040,7 +1044,7 @@ def _is_timestamp_expired(timestamp_str: str) -> bool:
             expiry_dt = expiry_dt.replace(tzinfo=timezone.utc)
         return expiry_dt < datetime.now(timezone.utc)
     except (ValueError, TypeError) as e:
-        logging.debug(f"Failed to parse timestamp {timestamp_str}: {e}")
+        app.logger.debug(f"Failed to parse timestamp {timestamp_str}: {e}")
         return False
 
 def _fetch_subscription_status(wg_public_key: str) -> Optional[Dict[str, Any]]:

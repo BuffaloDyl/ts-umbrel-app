@@ -7,6 +7,7 @@ import json
 import stat
 import tempfile
 from unittest.mock import patch, MagicMock
+import requests
 from app import app
 import app as app_module
 
@@ -549,8 +550,9 @@ class TestDataplaneAndRegressionFixes:
         })
         assert res.status_code == 200
 
+    @patch('app.requests.post', side_effect=requests.RequestException("No network in tests"))
     @patch('app.subprocess.run')
-    def test_upload_config_saves_tunnelsats_conf_and_meta(self, mock_run, client, data_dir):
+    def test_upload_config_saves_tunnelsats_conf_and_meta(self, mock_run, mock_post, client, data_dir):
         old_conf = data_dir / 'tunnelsats-old.conf'
         old_conf.write_text('[Interface]\nPrivateKey=old\n')
         target_conf = data_dir / 'tunnelsats.conf'
@@ -685,8 +687,9 @@ class TestDataplaneAndRegressionFixes:
         assert payload["is_expired"] is False
         assert os.path.exists(data_dir / "tunnelsats.conf")
 
+    @patch('app.requests.post', side_effect=requests.RequestException("No network in tests"))
     @patch('app.subprocess.run')
-    def test_upload_config_does_not_duplicate_existing_keepalive(self, mock_run, client, data_dir):
+    def test_upload_config_does_not_duplicate_existing_keepalive(self, mock_run, mock_post, client, data_dir):
         mock_proc = MagicMock()
         mock_proc.stdout = 'derivedPubKeyBase64==\n'
         mock_proc.returncode = 0
