@@ -1016,21 +1016,34 @@ def serve_static(path):
 _SUBSCRIPTION_CACHE: Dict[str, Tuple[float, Optional[Dict[str, Any]]]] = {}
 SUBSCRIPTION_CACHE_TTL = 600  # 10 minutes
 
+def _status_info_is_disabled_or_expired(info: Dict[str, Any]) -> bool:
+    """True when subscription state indicates an expired/disabled entitlement."""
+    if not isinstance(info, dict):
+        return False
+    status = str(info.get("status", "")).lower()
+    return status == "disabled" or _is_timestamp_expired(info.get("expiry"))
+
 def _fetch_subscription_status_cached(wg_public_key: str) -> Optional[Dict[str, Any]]:
     """Fetch subscription status with a short-lived internal cache."""
     now = time.time()
     if wg_public_key in _SUBSCRIPTION_CACHE:
         cache_time, info = _SUBSCRIPTION_CACHE[wg_public_key]
         if now - cache_time < SUBSCRIPTION_CACHE_TTL:
-            return info
+            # Never reuse volatile disabled/expired status entries from cache.
+            if info and _status_info_is_disabled_or_expired(info):
+                _SUBSCRIPTION_CACHE.pop(wg_public_key, None)
+            else:
+                return info
 
     info = _fetch_subscription_status(wg_public_key)
-    if info:
+    if info and not _status_info_is_disabled_or_expired(info):
         _SUBSCRIPTION_CACHE[wg_public_key] = (now, info)
-    else:
+    elif not info:
         # Negative Caching: Cache failures for 1 minute to avoid repeated 10s timeouts on retries.
         # We store this by setting the cache timestamp to be close to expiration (1 minute left).
         _SUBSCRIPTION_CACHE[wg_public_key] = (now - SUBSCRIPTION_CACHE_TTL + 60, None)
+    else:
+        _SUBSCRIPTION_CACHE.pop(wg_public_key, None)
     return info
 
 def _is_timestamp_expired(timestamp_str: str) -> bool:
@@ -1460,7 +1473,8 @@ def upload_config():
     if not wg_public_key:
         return jsonify({"success": False, "error": "Unable to derive public key from provided PrivateKey."}), 400
 
-    confirm = payload.get("confirm", False)
+    # Only an explicit JSON boolean true counts as confirmation.
+    confirm = payload.get("confirm") is True
     # Always attempt authoritative status check via cache.
     # This prevents redundant 10s waits on confirmation retries while keeping SOT in the backend.
     status_info = _fetch_subscription_status_cached(wg_public_key)
