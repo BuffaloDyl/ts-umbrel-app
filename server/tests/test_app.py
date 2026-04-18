@@ -1990,10 +1990,10 @@ class TestLocalWidgets:
         data = json.loads(res.data)
         assert data["type"] == "four-stats"
         assert data["refresh"] == "5s"
-        assert data["items"][0] == {"title": "Tunnel", "text": "Up", "subtext": "vpn"}
-        assert data["items"][1] == {"title": "Protected", "text": "Yes", "subtext": "routing"}
-        assert data["items"][2] == {"title": "Expires", "text": "May 4", "subtext": "renewal"}
-        assert data["items"][3] == {"title": "Node", "text": "LND", "subtext": "target"}
+        assert data["items"][0] == {"title": "Tunnel", "text": "🟢"}
+        assert data["items"][1] == {"title": "Protected", "text": "🟢"}
+        assert data["items"][2] == {"title": "Expires", "text": "May 4"}
+        assert data["items"][3] == {"title": "Node", "text": "LND"}
 
     def test_tunnel_overview_widget_reports_unprotected_without_expiry(self, client):
         status_payload = {
@@ -2014,10 +2014,10 @@ class TestLocalWidgets:
 
         assert res.status_code == 200
         data = json.loads(res.data)
-        assert data["items"][0] == {"title": "Tunnel", "text": "Down", "subtext": "vpn"}
-        assert data["items"][1] == {"title": "Protected", "text": "No", "subtext": "routing"}
-        assert data["items"][2] == {"title": "Expires", "text": "N/A", "subtext": "renewal"}
-        assert data["items"][3] == {"title": "Node", "text": "LND", "subtext": "target"}
+        assert data["items"][0] == {"title": "Tunnel", "text": "🔴"}
+        assert data["items"][1] == {"title": "Protected", "text": "🔴"}
+        assert data["items"][2] == {"title": "Expires", "text": "N/A"}
+        assert data["items"][3] == {"title": "Node", "text": "LND"}
 
 
 def test_manifest_includes_tunnel_status_widget():
@@ -2036,7 +2036,7 @@ def test_manifest_includes_tunnel_status_widget():
     assert widgets[0]["example"]["items"][2] == {"subtext": "Tunnel", "text": "🟢"}
     assert widgets[1]["type"] == "four-stats"
     assert widgets[1]["endpoint"] == "tunnelsats:9739/api/local/widgets/tunnel-overview"
-    assert widgets[1]["example"]["items"][0] == {"title": "Tunnel", "text": "Up", "subtext": "vpn"}
-    assert widgets[1]["example"]["items"][1] == {"title": "Protected", "text": "Yes", "subtext": "routing"}
-    assert widgets[1]["example"]["items"][2] == {"title": "Expires", "text": "May 4", "subtext": "renewal"}
-    assert widgets[1]["example"]["items"][3] == {"title": "Node", "text": "LND", "subtext": "target"}
+    assert widgets[1]["example"]["items"][0] == {"title": "Tunnel", "text": "🟢"}
+    assert widgets[1]["example"]["items"][1] == {"title": "Protected", "text": "🟢"}
+    assert widgets[1]["example"]["items"][2] == {"title": "Expires", "text": "May 4"}
+    assert widgets[1]["example"]["items"][3] == {"title": "Node", "text": "LND"}

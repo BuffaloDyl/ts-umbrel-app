@@ -1020,23 +1020,19 @@ def build_tunnel_overview_widget(status_data):
         "items": [
             {
                 "title": "Tunnel",
-                "text": "Up" if status_data.get("vpn_active") else "Down",
-                "subtext": "vpn",
+                "text": "🟢" if status_data.get("vpn_active") else "🔴",
             },
             {
                 "title": "Protected",
-                "text": "Yes" if routing_protected else "No",
-                "subtext": "routing",
+                "text": "🟢" if routing_protected else "🔴",
             },
             {
                 "title": "Expires",
                 "text": format_tunnel_widget_expiration(status_data.get("expires_at")),
-                "subtext": "renewal",
             },
             {
                 "title": "Node",
                 "text": node,
-                "subtext": "target",
             },
         ],
     }
