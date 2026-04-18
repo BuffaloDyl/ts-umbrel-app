@@ -18,7 +18,6 @@ LN_TARGET_PORT="9735" # Default to LND, will be updated in detect_lightning_cont
 RECONCILE_INTERVAL=30
 
 API_PID=""
-MONITOR_PID=""
 LAST_RECONCILE_EPOCH=0
 
 TARGET_CONTAINER_ID=""
@@ -769,9 +768,6 @@ reconcile_once() {
 
 cleanup() {
     log INFO "Received SIGTERM. Stopping ${APP_NAME}."
-    if [ -n "${MONITOR_PID}" ]; then
-        kill "${MONITOR_PID}" >/dev/null 2>&1 || true
-    fi
     if [ -n "${API_PID}" ]; then
         kill "${API_PID}" >/dev/null 2>&1 || true
     fi
@@ -786,9 +782,6 @@ main_loop() {
         if [ -f "${RESTART_TRIGGER}" ]; then
             log INFO "restart trigger detected"
             rm -f "${RESTART_TRIGGER}"
-            if [ -n "${MONITOR_PID}" ]; then
-                kill "${MONITOR_PID}" >/dev/null 2>&1 || true
-            fi
             if [ -n "${API_PID}" ]; then
                 kill "${API_PID}" >/dev/null 2>&1 || true
             fi
@@ -836,12 +829,6 @@ echo "Starting Tunnelsats v3 (Umbrel App)..."
 log INFO "Starting internal dashboard server on port 9739"
 python3 /app/server/app.py &
 API_PID=$!
-
-if [ "${TUNNELSATS_MONITOR_ENABLED:-1}" = "1" ]; then
-    log INFO "Starting tunnel monitor"
-    /app/scripts/tunnel-monitor.sh &
-    MONITOR_PID=$!
-fi
 
 # Zero-Loss Migration: Safeguard existing users moving to persistent data mounts (Grep ID 3033104615)
 if ! ls /data/tunnelsats*.conf >/dev/null 2>&1 && ls /migration_source/tunnelsats*.conf >/dev/null 2>&1; then
