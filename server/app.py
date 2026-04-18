@@ -1017,6 +1017,8 @@ def build_tunnel_overview_widget(status_data):
         "type": "four-stats",
         "link": "",
         "refresh": "5s",
+        # Umbrel four-stats items may also include a "subtext" field; we are intentionally
+        # omitting it here to keep the widget visually compact.
         "items": [
             {
                 "title": "Tunnel",
