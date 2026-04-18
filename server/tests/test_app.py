@@ -5,14 +5,22 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import pytest
 import json
 import stat
+import subprocess
 import tempfile
+import time
+from unittest.mock import patch, MagicMock
 import requests
 import yaml
-from unittest.mock import patch, MagicMock
 from app import app
 import app as app_module
 
 # --- Fixtures ---
+
+@pytest.fixture(autouse=True)
+def clear_subscription_cache():
+    """Ensure the server-side subscription cache is cleared between every test to prevent isolation leaks."""
+    app_module._SUBSCRIPTION_CACHE.clear()
+    yield
 
 @pytest.fixture
 def client():
@@ -33,6 +41,171 @@ def test_status_endpoint(client):
     assert res.status_code == 200
     data = json.loads(res.data)
     assert 'wg_status' in data
+
+
+@patch('app.time.time', return_value=1_000_000)
+@patch('app.docker_api', return_value=[])
+@patch('app.subprocess.check_output')
+def test_local_status_reports_disconnected_when_latest_handshake_is_zero(mock_check_output, _mock_docker_api, _mock_time, client):
+    def check_output_side_effect(cmd, **kwargs):
+        if cmd == ["wg", "show", "tunnelsatsv2"]:
+            return (
+                b"interface: tunnelsatsv2\n"
+                b"  public key: localPubKey123\n"
+                b"peer: remotePeerKey123\n"
+            )
+        if cmd == ["wg", "show", "tunnelsatsv2", "latest-handshakes"]:
+            return b"remotePeerKey123\t0\n"
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    mock_check_output.side_effect = check_output_side_effect
+
+    res = client.get('/api/local/status')
+    assert res.status_code == 200
+    data = json.loads(res.data)
+    assert data['wg_status'] == 'Disconnected'
+    assert data['vpn_active'] is False
+    assert data['wg_pubkey'] == 'localPubKey123'
+
+
+@patch('app.time.time', return_value=1_000_000)
+@patch('app.docker_api', return_value=[])
+@patch('app.subprocess.check_output')
+def test_local_status_reports_disconnected_when_latest_handshake_is_stale(mock_check_output, _mock_docker_api, _mock_time, client):
+    def check_output_side_effect(cmd, **kwargs):
+        if cmd == ["wg", "show", "tunnelsatsv2"]:
+            return (
+                b"interface: tunnelsatsv2\n"
+                b"  public key: localPubKey123\n"
+                b"peer: remotePeerKey123\n"
+            )
+        if cmd == ["wg", "show", "tunnelsatsv2", "latest-handshakes"]:
+            return b"remotePeerKey123\t999819\n"
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    mock_check_output.side_effect = check_output_side_effect
+
+    res = client.get('/api/local/status')
+    assert res.status_code == 200
+    data = json.loads(res.data)
+    assert data['wg_status'] == 'Disconnected'
+    assert data['vpn_active'] is False
+    assert data['wg_pubkey'] == 'localPubKey123'
+
+
+@patch('app.time.time', return_value=1_000_000)
+@patch('app.docker_api', return_value=[])
+@patch('app.subprocess.check_output')
+def test_local_status_reports_connected_when_latest_handshake_is_recent(mock_check_output, _mock_docker_api, _mock_time, client):
+    def check_output_side_effect(cmd, **kwargs):
+        if cmd == ["wg", "show", "tunnelsatsv2"]:
+            return (
+                b"interface: tunnelsatsv2\n"
+                b"  public key: localPubKey123\n"
+                b"peer: remotePeerKey123\n"
+            )
+        if cmd == ["wg", "show", "tunnelsatsv2", "latest-handshakes"]:
+            return b"remotePeerKey123\t999950\n"
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    mock_check_output.side_effect = check_output_side_effect
+
+    res = client.get('/api/local/status')
+    assert res.status_code == 200
+    data = json.loads(res.data)
+    assert data['wg_status'] == 'Connected'
+    assert data['vpn_active'] is True
+
+
+@patch('app.time.time', return_value=1_000_000)
+@patch('app.docker_api', return_value=[])
+@patch('app.subprocess.check_output')
+def test_local_status_reports_connected_when_latest_handshake_is_exactly_threshold(mock_check_output, _mock_docker_api, _mock_time, client):
+    def check_output_side_effect(cmd, **kwargs):
+        if cmd == ["wg", "show", "tunnelsatsv2"]:
+            return (
+                b"interface: tunnelsatsv2\n"
+                b"  public key: localPubKey123\n"
+                b"peer: remotePeerKey123\n"
+            )
+        if cmd == ["wg", "show", "tunnelsatsv2", "latest-handshakes"]:
+            return b"remotePeerKey123\t999820\n"
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    mock_check_output.side_effect = check_output_side_effect
+
+    res = client.get('/api/local/status')
+    assert res.status_code == 200
+    data = json.loads(res.data)
+    assert data['wg_status'] == 'Connected'
+    assert data['vpn_active'] is True
+
+
+def test_fetch_cln_counts_reads_getinfo_from_unix_socket():
+    mock_socket = MagicMock()
+    mock_socket.recv.side_effect = [
+        b'{"jsonrpc":"2.0","id":1,"result":{"num_peers":1,"num_active_channels":0}}'
+    ]
+
+    with patch('app.socket.socket') as mock_socket_factory:
+        mock_socket_factory.return_value.__enter__.return_value = mock_socket
+
+        peers, channels = app_module.fetch_cln_counts()
+
+    assert (peers, channels) == ("1", "0")
+    mock_socket.connect.assert_called_once_with(app_module.CLN_RPC_PATH)
+    mock_socket.sendall.assert_called_once()
+
+
+def test_fetch_tunnel_lightning_counts_uses_cln_socket_when_target_impl_is_cln():
+    with patch('app.fetch_cln_counts', return_value=("1", "0")) as mock_cln_counts:
+        with patch('app.fetch_lightning_stats_widget_data') as mock_widget_data:
+            assert app_module.fetch_tunnel_lightning_counts("cln") == ("1", "0")
+
+    mock_cln_counts.assert_called_once_with()
+    mock_widget_data.assert_not_called()
+
+
+def test_fetch_tunnel_lightning_counts_uses_lnd_widget_when_target_impl_is_not_cln():
+    widget_data = {
+        "type": "four-stats",
+        "items": [
+            {"subtext": "Peers", "text": "5"},
+            {"subtext": "Channels", "text": "3"},
+        ],
+    }
+
+    with patch('app.fetch_lightning_stats_widget_data', return_value=widget_data) as mock_widget_data:
+        with patch('app.fetch_cln_counts') as mock_cln_counts:
+            assert app_module.fetch_tunnel_lightning_counts("lnd") == ("5", "3")
+
+    mock_widget_data.assert_called_once_with()
+    mock_cln_counts.assert_not_called()
+
+
+@patch('app.time.time', return_value=1_000_000)
+@patch('app.docker_api', return_value=[])
+@patch('app.subprocess.check_output')
+def test_local_status_reports_disconnected_when_latest_handshakes_query_fails(mock_check_output, _mock_docker_api, _mock_time, client):
+    def check_output_side_effect(cmd, **kwargs):
+        if cmd == ["wg", "show", "tunnelsatsv2"]:
+            return (
+                b"interface: tunnelsatsv2\n"
+                b"  public key: localPubKey123\n"
+                b"peer: remotePeerKey123\n"
+            )
+        if cmd == ["wg", "show", "tunnelsatsv2", "latest-handshakes"]:
+            raise subprocess.CalledProcessError(returncode=1, cmd=cmd, output=b"")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    mock_check_output.side_effect = check_output_side_effect
+
+    res = client.get('/api/local/status')
+    assert res.status_code == 200
+    data = json.loads(res.data)
+    assert data['wg_status'] == 'Disconnected'
+    assert data['vpn_active'] is False
+    assert data['wg_pubkey'] == 'localPubKey123'
 
 
 def test_security_headers_present(client):
@@ -545,8 +718,9 @@ class TestDataplaneAndRegressionFixes:
         })
         assert res.status_code == 200
 
+    @patch('app.requests.post', side_effect=requests.RequestException("No network in tests"))
     @patch('app.subprocess.run')
-    def test_upload_config_saves_tunnelsats_conf_and_meta(self, mock_run, client, data_dir):
+    def test_upload_config_saves_tunnelsats_conf_and_meta(self, mock_run, mock_post, client, data_dir):
         old_conf = data_dir / 'tunnelsats-old.conf'
         old_conf.write_text('[Interface]\nPrivateKey=old\n')
         target_conf = data_dir / 'tunnelsats.conf'
@@ -559,7 +733,7 @@ class TestDataplaneAndRegressionFixes:
 
         config_text = (
             "# Port Forwarding: 35825\n"
-            "# Valid Until: 2026-04-05T10:30:00.000Z\n"
+            "# Valid Until: 2030-04-05T10:30:00.000Z\n"
             "[Interface]\n"
             "PrivateKey = clientPrivateKeyBase64==\n"
             "\n"
@@ -577,7 +751,7 @@ class TestDataplaneAndRegressionFixes:
         assert payload["message"] == "Configuration saved and parsed."
         assert payload["meta"]["serverId"] == "de2"
         assert payload["meta"]["wgPublicKey"] == "derivedPubKeyBase64=="
-        assert payload["meta"]["expiresAt"] == "2026-04-05T10:30:00.000Z"
+        assert payload["meta"]["expiresAt"] == "2030-04-05T10:30:00.000Z"
         assert payload["meta"]["vpnPort"] == 35825
 
         assert os.path.exists(str(old_conf) + '.bak')
@@ -590,7 +764,7 @@ class TestDataplaneAndRegressionFixes:
             meta = json.load(fp)
         assert meta["serverId"] == "de2"
         assert meta["wgPublicKey"] == "derivedPubKeyBase64=="
-        assert meta["expiresAt"] == "2026-04-05T10:30:00.000Z"
+        assert meta["expiresAt"] == "2030-04-05T10:30:00.000Z"
         assert meta["vpnPort"] == 35825
 
         mock_run.assert_called_once_with(
@@ -602,8 +776,160 @@ class TestDataplaneAndRegressionFixes:
             timeout=5,
         )
 
+    @patch('app.requests.post')
     @patch('app.subprocess.run')
-    def test_upload_config_does_not_duplicate_existing_keepalive(self, mock_run, client, data_dir):
+    def test_upload_config_authoritative_sync_expired_blocks_persistence(self, mock_run, mock_post, client, data_dir):
+        """If the API says it is expired, persistence should be blocked unless confirm=true."""
+        # 1. API says EXPIRED
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "expiry": "2023-01-01T00:00:00Z", # Past
+            "status": "disabled",
+            "server_domain": "de2.tunnelsats.com"
+        }
+        mock_post.return_value = mock_resp
+
+        mock_proc = MagicMock()
+        mock_proc.stdout = 'derivedPubKeyBase64==\n'
+        mock_proc.returncode = 0
+        mock_run.return_value = mock_proc
+
+        config_text = (
+            "# Valid Until: 2023-01-01T00:00:00Z\n"
+            "[Interface]\nPrivateKey = clientPrivateKeyBase64==\n"
+            "[Peer]\nPublicKey = server==\nEndpoint = de2.tunnelsats.com:51820\n"
+        )
+
+        # 2. Upload WITHOUT confirm
+        res = client.post('/api/local/upload-config', json={"config": config_text})
+        assert res.status_code == 200 # We return 200 but with is_expired=True and no persistence message
+        payload = json.loads(res.data)
+        assert payload["is_expired"] is True
+        assert "Configuration saved" not in payload.get("message", "")
+        
+        # Verify NO file was written
+        assert not os.path.exists(data_dir / "tunnelsats.conf")
+
+        # 3. Upload WITH confirm
+        res = client.post('/api/local/upload-config', json={"config": config_text, "confirm": True})
+        assert res.status_code == 200
+        payload = json.loads(res.data)
+        assert payload["success"] is True
+        assert "Configuration saved" in payload["message"]
+        
+        # Verify file WAS written
+        assert os.path.exists(data_dir / "tunnelsats.conf")
+        assert (data_dir / app_module.META_FILE).exists()
+        with open(data_dir / app_module.META_FILE) as f:
+            meta = json.load(f)
+            assert meta["expiresAt"] == "2023-01-01T00:00:00Z"
+
+    @patch('app.requests.post')
+    @patch('app.subprocess.run')
+    def test_upload_config_authoritative_sync_active_persists_immediately(self, mock_run, mock_post, client, data_dir):
+        """If the API says it is ACTIVE, it should persist immediately even without confirm=true."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "expiry": "2100-01-01T00:00:00Z", # Future
+            "status": "enabled",
+            "server_domain": "au1.tunnelsats.com"
+        }
+        mock_post.return_value = mock_resp
+
+        mock_proc = MagicMock()
+        mock_proc.stdout = 'derivedPubKeyBase64==\n'
+        mock_proc.returncode = 0
+        mock_run.return_value = mock_proc
+
+        config_text = (
+            "[Interface]\nPrivateKey = clientPrivateKeyBase64==\n"
+            "[Peer]\nPublicKey = server==\nEndpoint = au1.tunnelsats.com:51820\n"
+        )
+
+        res = client.post('/api/local/upload-config', json={"config": config_text})
+        assert res.status_code == 200
+        payload = json.loads(res.data)
+        assert payload["success"] is True
+        assert payload["is_expired"] is False
+        assert os.path.exists(data_dir / "tunnelsats.conf")
+
+    @patch('app.requests.post')
+    @patch('app.subprocess.run')
+    def test_upload_config_expired_requires_literal_true_confirmation(self, mock_run, mock_post, client, data_dir):
+        """Only JSON boolean true should bypass expired warning persistence guard."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "expiry": "2023-01-01T00:00:00Z",
+            "status": "disabled",
+            "server_domain": "de2.tunnelsats.com"
+        }
+        mock_post.return_value = mock_resp
+
+        mock_proc = MagicMock()
+        mock_proc.stdout = 'derivedPubKeyBase64==\n'
+        mock_proc.returncode = 0
+        mock_run.return_value = mock_proc
+
+        config_text = (
+            "[Interface]\nPrivateKey = clientPrivateKeyBase64==\n"
+            "[Peer]\nPublicKey = server==\nEndpoint = de2.tunnelsats.com:51820\n"
+        )
+
+        res = client.post('/api/local/upload-config', json={"config": config_text, "confirm": "false"})
+        assert res.status_code == 200
+        payload = json.loads(res.data)
+        assert payload["success"] is True
+        assert payload["warning"] == "Expired"
+        assert payload["is_expired"] is True
+        assert not os.path.exists(data_dir / "tunnelsats.conf")
+
+    @patch('app.requests.post')
+    @patch('app.subprocess.run')
+    def test_upload_config_ignores_cached_expired_state_and_refetches(self, mock_run, mock_post, client, data_dir):
+        """Cached expired/disabled entries should not gate a fresh authoritative re-check."""
+        app_module._SUBSCRIPTION_CACHE["derivedPubKeyBase64=="] = (
+            time.time(),
+            {
+                "expiry": "2023-01-01T00:00:00Z",
+                "status": "disabled",
+                "server_domain": "de2.tunnelsats.com",
+            },
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "expiry": "2100-01-01T00:00:00Z",
+            "status": "enabled",
+            "server_domain": "au1.tunnelsats.com"
+        }
+        mock_post.return_value = mock_resp
+
+        mock_proc = MagicMock()
+        mock_proc.stdout = 'derivedPubKeyBase64==\n'
+        mock_proc.returncode = 0
+        mock_run.return_value = mock_proc
+
+        config_text = (
+            "[Interface]\nPrivateKey = clientPrivateKeyBase64==\n"
+            "[Peer]\nPublicKey = server==\nEndpoint = de2.tunnelsats.com:51820\n"
+        )
+
+        res = client.post('/api/local/upload-config', json={"config": config_text})
+        assert res.status_code == 200
+        payload = json.loads(res.data)
+        assert payload["success"] is True
+        assert payload["is_expired"] is False
+        assert payload["meta"]["expiresAt"] == "2100-01-01T00:00:00Z"
+        assert os.path.exists(data_dir / "tunnelsats.conf")
+        assert mock_post.call_count == 1
+
+    @patch('app.requests.post', side_effect=requests.RequestException("No network in tests"))
+    @patch('app.subprocess.run')
+    def test_upload_config_does_not_duplicate_existing_keepalive(self, mock_run, mock_post, client, data_dir):
         mock_proc = MagicMock()
         mock_proc.stdout = 'derivedPubKeyBase64==\n'
         mock_proc.returncode = 0
@@ -1484,7 +1810,20 @@ class TestFullE2E_Workflow:
         assert res.status_code == 200
 
         # 5. Status Check
-        mock_subprocess.return_value = b"interface: tunnelsatsv2\n  public key: pubKey123\n  private key: (hidden)\n  listening port: 51820\n"
+        def mock_wg_show_side_effect(cmd, **kwargs):
+            if cmd == ["wg", "show", "tunnelsatsv2"]:
+                return (
+                    b"interface: tunnelsatsv2\n"
+                    b"  public key: pubKey123\n"
+                    b"  private key: (hidden)\n"
+                    b"  listening port: 51820\n"
+                    b"peer: peerPubKey123\n"
+                )
+            if cmd == ["wg", "show", "tunnelsatsv2", "latest-handshakes"]:
+                return f"peerPubKey123\t{int(time.time())}\n".encode('utf-8')
+            raise AssertionError(f"Unexpected command: {cmd}")
+
+        mock_subprocess.side_effect = mock_wg_show_side_effect
         
         res = client.get('/api/local/status')
         assert res.status_code == 200
@@ -1561,101 +1900,76 @@ def test_claim_subscription_invalid_config(client, data_dir):
 
 
 class TestLocalWidgets:
-    def test_bitcoin_wallet_widget_appends_protected_tunnel_status(self, client):
-        widget_payload = {
-            "type": "text-with-buttons",
-            "refresh": "5s",
-            "title": "Bitcoin Wallet",
-            "text": "1,845,894",
-            "subtext": "sats",
-            "buttons": [
-                {"text": "Withdraw", "icon": "arrow-up-right", "link": "?action=send-bitcoin"},
-                {"text": "Deposit", "icon": "arrow-down-right", "link": "?action=receive-bitcoin"},
-            ],
-        }
+    def test_tunnel_status_widget_reports_protected_lnd_server(self, client):
         status_payload = {
             "vpn_active": True,
             "lnd_routing_active": True,
             "cln_routing_active": False,
+            "lnd_detected": True,
+            "cln_detected": False,
             "target_impl": "lnd",
+            "server_domain": "de2.tunnelsats.com",
+            "peers": "5",
+            "active_channels": "3",
         }
 
-        with patch('app.fetch_lightning_widget_data', return_value=widget_payload), \
-             patch('app.collect_local_status', return_value=status_payload):
-            res = client.get('/api/local/widgets/bitcoin-wallet')
+        with patch('app.collect_tunnel_widget_state', return_value=status_payload):
+            res = client.get('/api/local/widgets/tunnel-status')
 
         assert res.status_code == 200
         data = json.loads(res.data)
-        assert data["title"] == "Bitcoin Wallet"
-        assert data["text"] == "1,845,894"
-        assert data["subtext"] == "sats · Tunnel Protected (LND)"
-        assert data["buttons"] == widget_payload["buttons"]
+        assert data["type"] == "three-stats"
+        assert data["refresh"] == "5s"
+        assert data["items"][0] == {"subtext": "Peers", "text": "5"}
+        assert data["items"][1] == {"subtext": "Channels", "text": "3"}
+        assert data["items"][2] == {"subtext": "Tunnel", "text": "🟢"}
 
-    def test_lightning_wallet_widget_appends_connected_status_without_node(self, client):
-        widget_payload = {
-            "type": "text-with-buttons",
-            "refresh": "2s",
-            "title": "Lightning Wallet",
-            "text": "762,248",
-            "subtext": "sats",
-            "buttons": [
-                {"text": "Send", "icon": "arrow-up-right", "link": "?action=send-lightning"},
-                {"text": "Receive", "icon": "arrow-down-right", "link": "?action=receive-lightning"},
-            ],
-        }
+    def test_tunnel_status_widget_reports_connected_without_routing(self, client):
         status_payload = {
             "vpn_active": True,
             "lnd_routing_active": False,
             "cln_routing_active": False,
+            "lnd_detected": False,
+            "cln_detected": False,
             "target_impl": "",
+            "server_domain": "",
+            "peers": "-",
+            "active_channels": "-",
         }
 
-        with patch('app.fetch_lightning_widget_data', return_value=widget_payload), \
-             patch('app.collect_local_status', return_value=status_payload):
-            res = client.get('/api/local/widgets/lightning-wallet')
+        with patch('app.collect_tunnel_widget_state', return_value=status_payload):
+            res = client.get('/api/local/widgets/tunnel-status')
 
         assert res.status_code == 200
         data = json.loads(res.data)
-        assert data["subtext"] == "sats · Tunnel Connected"
+        assert data["items"][0]["text"] == "-"
+        assert data["items"][1]["text"] == "-"
+        assert data["items"][2]["text"] == "🟡"
 
-    def test_lightning_stats_widget_appends_tunnel_status_to_first_stat(self, client):
-        widget_payload = {
-            "type": "four-stats",
-            "refresh": "5s",
-            "link": "",
-            "items": [
-                {"title": "Connections", "text": "5", "subtext": "peers"},
-                {"title": "Active channels", "text": "3", "subtext": "channels"},
-                {"title": "Max send", "text": "90K", "subtext": "sats"},
-                {"title": "Max receive", "text": "45K", "subtext": "sats"},
-            ],
-        }
+    def test_tunnel_status_widget_reports_down_with_detected_cln(self, client):
         status_payload = {
             "vpn_active": False,
             "lnd_routing_active": False,
             "cln_routing_active": False,
+            "lnd_detected": False,
+            "cln_detected": True,
             "target_impl": "cln",
+            "server_domain": "us1.tunnelsats.com",
+            "peers": "12",
+            "active_channels": "7",
         }
 
-        with patch('app.fetch_lightning_widget_data', return_value=widget_payload), \
-             patch('app.collect_local_status', return_value=status_payload):
-            res = client.get('/api/local/widgets/lightning-stats')
+        with patch('app.collect_tunnel_widget_state', return_value=status_payload):
+            res = client.get('/api/local/widgets/tunnel-status')
 
         assert res.status_code == 200
         data = json.loads(res.data)
-        assert data["items"][0]["subtext"] == "peers · Tunnel Down (CLN)"
-        assert data["items"][1:] == widget_payload["items"][1:]
-
-    def test_widget_route_returns_502_when_upstream_lightning_widget_fails(self, client):
-        with patch('app.fetch_lightning_widget_data', side_effect=requests.RequestException("boom")):
-            res = client.get('/api/local/widgets/bitcoin-wallet')
-
-        assert res.status_code == 502
-        data = json.loads(res.data)
-        assert "Unable to reach Lightning widget endpoint" in data["error"]
+        assert data["items"][0]["text"] == "12"
+        assert data["items"][1]["text"] == "7"
+        assert data["items"][2]["text"] == "🔴"
 
 
-def test_manifest_includes_lightning_parity_widgets():
+def test_manifest_includes_tunnel_status_widget():
     manifest_path = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..", "tunnelsats", "umbrel-app.yml")
     )
@@ -1663,11 +1977,9 @@ def test_manifest_includes_lightning_parity_widgets():
         manifest = yaml.safe_load(fp)
 
     widgets = manifest.get("widgets", [])
-    assert [widget["id"] for widget in widgets] == [
-        "bitcoin-wallet",
-        "lightning-wallet",
-        "lightning-stats",
-    ]
-    assert widgets[0]["endpoint"] == "app:9739/api/local/widgets/bitcoin-wallet"
-    assert widgets[1]["endpoint"] == "app:9739/api/local/widgets/lightning-wallet"
-    assert widgets[2]["endpoint"] == "app:9739/api/local/widgets/lightning-stats"
+    assert [widget["id"] for widget in widgets] == ["tunnel-status"]
+    assert widgets[0]["type"] == "three-stats"
+    assert widgets[0]["endpoint"] == "tunnelsats:9739/api/local/widgets/tunnel-status"
+    assert widgets[0]["example"]["items"][0] == {"subtext": "Peers", "text": "5"}
+    assert widgets[0]["example"]["items"][1] == {"subtext": "Channels", "text": "3"}
+    assert widgets[0]["example"]["items"][2] == {"subtext": "Tunnel", "text": "🟢"}
