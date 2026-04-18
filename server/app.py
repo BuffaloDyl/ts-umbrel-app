@@ -989,15 +989,15 @@ def build_tunnel_status_widget(status_data):
 def format_tunnel_widget_expiration(expires_at):
     value = str(expires_at or "").strip()
     if not value:
-        return "Not setup"
+        return "N/A"
 
     try:
         expiry_dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return expiry_dt.date().isoformat()
+        return expiry_dt.strftime("%b %d").replace(" 0", " ")
     except (ValueError, TypeError):
         if "T" in value:
             fallback = value.split("T", 1)[0].strip()
-            return fallback or "Not setup"
+            return fallback or "N/A"
         return value
 
 
@@ -1019,15 +1019,15 @@ def build_tunnel_overview_widget(status_data):
         "refresh": "5s",
         "items": [
             {
-                "subtext": "Tunnel Status",
-                "text": "Connected" if status_data.get("vpn_active") else "Disconnected",
+                "subtext": "Tunnel",
+                "text": "Up" if status_data.get("vpn_active") else "Down",
             },
             {
-                "subtext": "Routing Protected",
+                "subtext": "Protected",
                 "text": "Yes" if routing_protected else "No",
             },
             {
-                "subtext": "Expiration Date",
+                "subtext": "Expires",
                 "text": format_tunnel_widget_expiration(status_data.get("expires_at")),
             },
             {
