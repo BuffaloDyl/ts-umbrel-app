@@ -1988,11 +1988,12 @@ class TestLocalWidgets:
 
         assert res.status_code == 200
         data = json.loads(res.data)
-        assert data["type"] == "three-stats"
+        assert data["type"] == "four-stats"
         assert data["refresh"] == "5s"
         assert data["items"][0] == {"subtext": "Tunnel Status", "text": "Connected"}
         assert data["items"][1] == {"subtext": "Routing Protected", "text": "Yes"}
         assert data["items"][2] == {"subtext": "Expiration Date", "text": "2026-05-04"}
+        assert data["items"][3] == {"subtext": "Node", "text": "LND"}
 
     def test_tunnel_overview_widget_reports_unprotected_without_expiry(self, client):
         status_payload = {
@@ -2016,6 +2017,7 @@ class TestLocalWidgets:
         assert data["items"][0] == {"subtext": "Tunnel Status", "text": "Disconnected"}
         assert data["items"][1] == {"subtext": "Routing Protected", "text": "No"}
         assert data["items"][2] == {"subtext": "Expiration Date", "text": "Not setup"}
+        assert data["items"][3] == {"subtext": "Node", "text": "LND"}
 
 
 def test_manifest_includes_tunnel_status_widget():
@@ -2032,8 +2034,9 @@ def test_manifest_includes_tunnel_status_widget():
     assert widgets[0]["example"]["items"][0] == {"subtext": "Peers", "text": "5"}
     assert widgets[0]["example"]["items"][1] == {"subtext": "Channels", "text": "3"}
     assert widgets[0]["example"]["items"][2] == {"subtext": "Tunnel", "text": "🟢"}
-    assert widgets[1]["type"] == "three-stats"
+    assert widgets[1]["type"] == "four-stats"
     assert widgets[1]["endpoint"] == "tunnelsats:9739/api/local/widgets/tunnel-overview"
     assert widgets[1]["example"]["items"][0] == {"subtext": "Tunnel Status", "text": "Connected"}
     assert widgets[1]["example"]["items"][1] == {"subtext": "Routing Protected", "text": "Yes"}
     assert widgets[1]["example"]["items"][2] == {"subtext": "Expiration Date", "text": "2026-05-04"}
+    assert widgets[1]["example"]["items"][3] == {"subtext": "Node", "text": "LND"}

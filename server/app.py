@@ -1005,9 +1005,16 @@ def build_tunnel_overview_widget(status_data):
     routing_protected = bool(status_data.get("vpn_active")) and (
         bool(status_data.get("lnd_routing_active")) or bool(status_data.get("cln_routing_active"))
     )
+    target_impl = str(status_data.get("target_impl", "")).strip().lower()
+    if target_impl == "lnd" or bool(status_data.get("lnd_detected")):
+        node = "LND"
+    elif target_impl == "cln" or bool(status_data.get("cln_detected")):
+        node = "CLN"
+    else:
+        node = "None"
 
     return {
-        "type": "three-stats",
+        "type": "four-stats",
         "link": "",
         "refresh": "5s",
         "items": [
@@ -1022,6 +1029,10 @@ def build_tunnel_overview_widget(status_data):
             {
                 "subtext": "Expiration Date",
                 "text": format_tunnel_widget_expiration(status_data.get("expires_at")),
+            },
+            {
+                "subtext": "Node",
+                "text": node,
             },
         ],
     }
