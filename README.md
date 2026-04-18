@@ -90,7 +90,6 @@ Target: us3.tunnelsats.com (178.156.167.202) : 12345
 ----------------------------------------------------------------
 ```
 - Check `GET /api/local/status` first to view the current `dataplane_mode` and `wg_status`.
-- If `rules_synced` is `false`, inspect `last_error` in the JSON response.
 - **Trigger immediate Dataplane repair:**
   ```bash
   curl -X POST http://127.0.0.1:9739/api/local/reconcile

@@ -928,6 +928,7 @@ def collect_tunnel_widget_state():
         "lnd_routing_active": routing_flag_from_config(LND_CONFIG_PATH, ("externalhosts=",)),
         "cln_routing_active": routing_flag_from_config(CLN_CONFIG_PATH, ("announce-addr=",)),
         "server_domain": str(meta.get("serverDomain", "")),
+        "expires_at": str(meta.get("expiresAt", "")),
         "target_impl": dataplane["target_impl"],
         "peers": peers,
         "active_channels": active_channels,
@@ -980,6 +981,47 @@ def build_tunnel_status_widget(status_data):
             {
                 "subtext": "Tunnel",
                 "text": summary["tunnel"],
+            },
+        ],
+    }
+
+
+def format_tunnel_widget_expiration(expires_at):
+    value = str(expires_at or "").strip()
+    if not value:
+        return "Not setup"
+
+    try:
+        expiry_dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return expiry_dt.date().isoformat()
+    except (ValueError, TypeError):
+        if "T" in value:
+            fallback = value.split("T", 1)[0].strip()
+            return fallback or "Not setup"
+        return value
+
+
+def build_tunnel_overview_widget(status_data):
+    routing_protected = bool(status_data.get("vpn_active")) and (
+        bool(status_data.get("lnd_routing_active")) or bool(status_data.get("cln_routing_active"))
+    )
+
+    return {
+        "type": "three-stats",
+        "link": "",
+        "refresh": "5s",
+        "items": [
+            {
+                "subtext": "Tunnel Status",
+                "text": "Connected" if status_data.get("vpn_active") else "Disconnected",
+            },
+            {
+                "subtext": "Routing Protected",
+                "text": "Yes" if routing_protected else "No",
+            },
+            {
+                "subtext": "Expiration Date",
+                "text": format_tunnel_widget_expiration(status_data.get("expires_at")),
             },
         ],
     }
@@ -1125,9 +1167,6 @@ def read_dataplane_state():
         "target_ip": "",
         "target_impl": "",
         "forwarding_port": "",
-        "rules_synced": False,
-        "last_reconcile_at": "",
-        "last_error": None,
         "docker_network": {
             "name": "docker-tunnelsats",
             "subnet": "10.9.9.0/25",
@@ -1210,6 +1249,8 @@ def read_legacy_reconcile_result():
 def reconcile_result_success(result):
     if not isinstance(result, dict):
         return False
+    if "success" in result:
+        return bool(result.get("success"))
     state = result.get("state", {})
     if isinstance(state, dict):
         return bool(state.get("rules_synced", False))
@@ -1675,9 +1716,6 @@ def local_status():
             "target_impl": dataplane["target_impl"],
             "docker_network": dataplane["docker_network"],
             "forwarding_port": dataplane["forwarding_port"],
-            "rules_synced": dataplane["rules_synced"],
-            "last_reconcile_at": dataplane["last_reconcile_at"],
-            "last_error": dataplane["last_error"],
         }
     )
 
@@ -1685,6 +1723,11 @@ def local_status():
 @app.route("/api/local/widgets/tunnel-status", methods=["GET"])
 def local_tunnel_status_widget():
     return jsonify(build_tunnel_status_widget(collect_tunnel_widget_state()))
+
+
+@app.route("/api/local/widgets/tunnel-overview", methods=["GET"])
+def local_tunnel_overview_widget():
+    return jsonify(build_tunnel_overview_widget(collect_tunnel_widget_state()))
 
 
 @app.route("/api/local/upload-config", methods=["POST"])

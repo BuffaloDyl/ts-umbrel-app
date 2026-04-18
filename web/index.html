@@ -661,10 +661,8 @@
                                 <div
                                     class="font-mono text-tsgreen bg-gray-900 border border-gray-800 p-2.5 rounded-lg text-xs overflow-x-auto shadow-inner">
                                     curl -s http://umbrel.lan:9739/api/local/status | jq</div>
-                                <p>This returns a JSON payload containing the active WireGuard endpoint, internal
-                                    routing metrics, and any failure logs (<code
-                                        class="bg-gray-900 border border-gray-800 px-1 py-0.5 rounded text-tsgreen font-mono text-xs">last_error</code>).
-                                    To check the live WireGuard handshake:</p>
+                                <p>This returns a JSON payload containing the active WireGuard endpoint and current
+                                    routing metadata. To check the live WireGuard handshake:</p>
                                 <div
                                     class="font-mono text-tsgreen bg-gray-900 border border-gray-800 p-2.5 rounded-lg text-xs overflow-x-auto shadow-inner">
                                     docker exec tunnelsats wg show</div>

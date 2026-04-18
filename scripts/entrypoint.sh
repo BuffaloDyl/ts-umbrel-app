@@ -60,21 +60,15 @@ write_state() {
         --arg target_ip "${DOCKER_TARGET_IP:-}" \
         --arg target_impl "${TARGET_IMPL:-}" \
         --arg forwarding_port "${FORWARDING_PORT:-}" \
-        --argjson rules_synced "${RULES_SYNCED}" \
-        --arg last_error "${LAST_ERROR:-}" \
         --arg docker_network_name "${DOCKER_NETWORK_NAME}" \
         --arg docker_network_subnet "${DOCKER_NETWORK_SUBNET}" \
         --arg bridge_name "${BRIDGE_NAME:-}" \
-        --arg last_reconcile_at "$(date -u +%FT%TZ)" \
         '{
             dataplane_mode: $dataplane_mode,
             target_container: $target_container,
             target_ip: $target_ip,
             target_impl: $target_impl,
             forwarding_port: $forwarding_port,
-            rules_synced: $rules_synced,
-            last_reconcile_at: $last_reconcile_at,
-            last_error: (if $last_error == "" then null else $last_error end),
             docker_network: {
                 name: $docker_network_name,
                 subnet: $docker_network_subnet,
@@ -622,6 +616,7 @@ cleanup_dataplane() {
 write_reconcile_result() {
     local request_id="$1"
     local changed="$2"
+    local success="$3"
     local result_path
     local tmp_path
     local state_json="{}"
@@ -645,8 +640,9 @@ write_reconcile_result() {
     if ! jq -n \
         --arg request_id "${request_id}" \
         --argjson changed "${changed}" \
+        --argjson success "${success}" \
         --argjson state "${state_json}" \
-        '{request_id:$request_id, changed:$changed, state: $state}' > "${tmp_path}"; then
+        '{request_id:$request_id, changed:$changed, success:$success, state: $state}' > "${tmp_path}"; then
         rm -f "${tmp_path}"
         return 1
     fi
@@ -671,7 +667,7 @@ reconcile_once() {
         LAST_ERROR="Docker socket unavailable"
         write_state
         if [ -n "${request_id}" ]; then
-            write_reconcile_result "${request_id}" false
+            write_reconcile_result "${request_id}" false false
         fi
         return 1
     fi
@@ -680,7 +676,7 @@ reconcile_once() {
         LAST_ERROR="No running LND/CLN container detected"
         write_state
         if [ -n "${request_id}" ]; then
-            write_reconcile_result "${request_id}" false
+            write_reconcile_result "${request_id}" false false
         fi
         return 1
     fi
@@ -688,7 +684,7 @@ reconcile_once() {
     if ! ensure_docker_network; then
         write_state
         if [ -n "${request_id}" ]; then
-            write_reconcile_result "${request_id}" false
+            write_reconcile_result "${request_id}" false false
         fi
         return 1
     fi
@@ -696,7 +692,7 @@ reconcile_once() {
     if ! ensure_container_attached; then
         write_state
         if [ -n "${request_id}" ]; then
-            write_reconcile_result "${request_id}" false
+            write_reconcile_result "${request_id}" false false
         fi
         return 1
     fi
@@ -705,7 +701,7 @@ reconcile_once() {
         LAST_ERROR="Failed to resolve docker bridge interface"
         write_state
         if [ -n "${request_id}" ]; then
-            write_reconcile_result "${request_id}" false
+            write_reconcile_result "${request_id}" false false
         fi
         return 1
     fi
@@ -713,7 +709,7 @@ reconcile_once() {
     if ! ensure_wg_up; then
         write_state
         if [ -n "${request_id}" ]; then
-            write_reconcile_result "${request_id}" false
+            write_reconcile_result "${request_id}" false false
         fi
         return 1
     fi
@@ -721,7 +717,7 @@ reconcile_once() {
     if ! ensure_policy_routing; then
         write_state
         if [ -n "${request_id}" ]; then
-            write_reconcile_result "${request_id}" false
+            write_reconcile_result "${request_id}" false false
         fi
         return 1
     fi
@@ -734,7 +730,7 @@ reconcile_once() {
     if ! ensure_nat_forward_rules; then
         write_state
         if [ -n "${request_id}" ]; then
-            write_reconcile_result "${request_id}" false
+            write_reconcile_result "${request_id}" false false
         fi
         return 1
     fi
@@ -754,13 +750,13 @@ reconcile_once() {
 
     if [ -n "${request_id}" ]; then
         if [ "${changed}" -eq 1 ]; then
-            write_reconcile_result "${request_id}" true
+            write_reconcile_result "${request_id}" true "${RULES_SYNCED}"
         else
-            write_reconcile_result "${request_id}" false
+            write_reconcile_result "${request_id}" false "${RULES_SYNCED}"
         fi
     fi
 
-    log INFO "reconcile_done reason=${reason} target=${TARGET_CONTAINER_NAME} port=${FORWARDING_PORT} synced=${RULES_SYNCED}"
+    log INFO "reconcile_done reason=${reason} target=${TARGET_CONTAINER_NAME} port=${FORWARDING_PORT}"
     LAST_RECONCILE_EPOCH="$(date +%s)"
 
     return 0

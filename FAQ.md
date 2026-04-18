@@ -23,7 +23,7 @@ The dashboard uses our internal **Dataplane API**. You can query this directly v
 curl -s http://umbrel.lan:9739/api/local/status | jq
 ```
 
-This returns a JSON payload containing the active WireGuard endpoint, internal routing metrics, and any failure logs (`last_error`). To check the live WireGuard handshake:
+This returns a JSON payload containing the active WireGuard endpoint and current routing metadata. To check the live WireGuard handshake:
 
 ```bash
 docker exec tunnelsats wg show

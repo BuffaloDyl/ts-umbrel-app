@@ -59,9 +59,7 @@ async function mockFetch(url) {
                 server_domain: 'au1.tunnelsats.com',
                 vpn_port: '39486',
                 expires_at: '2027-03-10T12:00:00Z',
-                forwarding_port: '35825',
-                last_reconcile_at: new Date().toISOString(),
-                last_error: null
+                forwarding_port: '35825'
             }
         };
     }

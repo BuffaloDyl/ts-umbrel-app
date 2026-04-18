@@ -19,11 +19,17 @@ This document explains the repository structure and workflow for the TunnelSats 
 ## Synchronization Workflow
 
 ### 1. Verification (Local/Remote)
-Always verify your changes on a live Umbrel node before submitting to the monorepo:
+Always verify your changes on a live Umbrel node before submitting to the monorepo.
+
+For source changes under `server/`, `web/`, or `scripts/`, use the hot-patch workflow so the running
+container actually receives the updated code:
 ```bash
-# Sync local dev to Umbrel node and restart
-dev@env:~/ts-umbrel-app$ rsync -av --delete tunnelsats/ umbrel@umbrel.local:~/umbrel/app-data/tunnelsats/
+dev@env:~/ts-umbrel-app$ scripts/sync.sh node
 ```
+
+Only syncing `tunnelsats/` updates app-store metadata such as `umbrel-app.yml`, icons, and gallery assets.
+That is not sufficient for backend route changes and can produce manifest/runtime mismatches such as widget
+endpoints returning `404 NOT FOUND`.
 
 ### 2. Multi-Repo Release Automation (`promote`)
 We utilize an automated release promotion workflow to maintain total parity between our local repository and the official `umbrel-apps` GitHub fork.

@@ -1001,8 +1001,9 @@ class TestDataplaneAndRegressionFixes:
         assert data['version'] == 'v9.1.2'
         assert data['dataplane_mode'] == 'docker-full-parity'
         assert data['docker_network']['name'] == 'docker-tunnelsats'
-        assert data['rules_synced'] is False
-        assert data['last_error'] is None
+        assert 'rules_synced' not in data
+        assert 'last_error' not in data
+        assert 'last_reconcile_at' not in data
 
     @patch('app.docker_api')
     def test_status_queries_only_running_containers_for_ips(self, mock_docker_api, client):
@@ -1036,7 +1037,7 @@ class TestDataplaneAndRegressionFixes:
 
                         os.makedirs(result_dir, exist_ok=True)
                         with open(os.path.join(result_dir, f'{request_id}.json'), 'w') as f:
-                            json.dump({'request_id': request_id, 'changed': True, 'state': {'rules_synced': True}}, f)
+                            json.dump({'request_id': request_id, 'changed': True, 'success': True}, f)
 
                         complete = client.get(f'/api/local/reconcile/{request_id}')
                         assert complete.status_code == 200
@@ -1051,7 +1052,7 @@ class TestDataplaneAndRegressionFixes:
             os.makedirs(result_dir, exist_ok=True)
             request_id = 'req-unsynced-1'
             with open(os.path.join(result_dir, f'{request_id}.json'), 'w') as f:
-                json.dump({'request_id': request_id, 'changed': False, 'state': {'rules_synced': False}}, f)
+                json.dump({'request_id': request_id, 'changed': False, 'success': False}, f)
 
             with patch('app.RECONCILE_RESULT_DIR', result_dir):
                 with patch('app.RECONCILE_RESULT_LEGACY', os.path.join(tmp_dir, 'legacy.json')):
@@ -1600,9 +1601,6 @@ class TestDataplaneAndRegressionFixes:
             "target_impl": "lnd",
             "docker_network": "umbrel_main_network",
             "forwarding_port": 35825,
-            "rules_synced": True,
-            "last_reconcile_at": "2026-03-15T12:00:00Z",
-            "last_error": None
         }
 
         res = client.get('/api/local/status')
@@ -1909,6 +1907,7 @@ class TestLocalWidgets:
             "cln_detected": False,
             "target_impl": "lnd",
             "server_domain": "de2.tunnelsats.com",
+            "expires_at": "2026-05-04T19:06:14.000Z",
             "peers": "5",
             "active_channels": "3",
         }
@@ -1933,6 +1932,7 @@ class TestLocalWidgets:
             "cln_detected": False,
             "target_impl": "",
             "server_domain": "",
+            "expires_at": "",
             "peers": "-",
             "active_channels": "-",
         }
@@ -1955,6 +1955,7 @@ class TestLocalWidgets:
             "cln_detected": True,
             "target_impl": "cln",
             "server_domain": "us1.tunnelsats.com",
+            "expires_at": "2026-05-04T19:06:14.000Z",
             "peers": "12",
             "active_channels": "7",
         }
@@ -1968,6 +1969,54 @@ class TestLocalWidgets:
         assert data["items"][1]["text"] == "7"
         assert data["items"][2]["text"] == "🔴"
 
+    def test_tunnel_overview_widget_reports_status_protection_and_expiry(self, client):
+        status_payload = {
+            "vpn_active": True,
+            "lnd_routing_active": True,
+            "cln_routing_active": False,
+            "lnd_detected": True,
+            "cln_detected": False,
+            "target_impl": "lnd",
+            "server_domain": "us3.tunnelsats.com",
+            "expires_at": "2026-05-04T19:06:14.000Z",
+            "peers": "5",
+            "active_channels": "3",
+        }
+
+        with patch('app.collect_tunnel_widget_state', return_value=status_payload):
+            res = client.get('/api/local/widgets/tunnel-overview')
+
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert data["type"] == "three-stats"
+        assert data["refresh"] == "5s"
+        assert data["items"][0] == {"subtext": "Tunnel Status", "text": "Connected"}
+        assert data["items"][1] == {"subtext": "Routing Protected", "text": "Yes"}
+        assert data["items"][2] == {"subtext": "Expiration Date", "text": "2026-05-04"}
+
+    def test_tunnel_overview_widget_reports_unprotected_without_expiry(self, client):
+        status_payload = {
+            "vpn_active": False,
+            "lnd_routing_active": True,
+            "cln_routing_active": False,
+            "lnd_detected": True,
+            "cln_detected": False,
+            "target_impl": "lnd",
+            "server_domain": "us3.tunnelsats.com",
+            "expires_at": "",
+            "peers": "5",
+            "active_channels": "3",
+        }
+
+        with patch('app.collect_tunnel_widget_state', return_value=status_payload):
+            res = client.get('/api/local/widgets/tunnel-overview')
+
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert data["items"][0] == {"subtext": "Tunnel Status", "text": "Disconnected"}
+        assert data["items"][1] == {"subtext": "Routing Protected", "text": "No"}
+        assert data["items"][2] == {"subtext": "Expiration Date", "text": "Not setup"}
+
 
 def test_manifest_includes_tunnel_status_widget():
     manifest_path = os.path.abspath(
@@ -1977,9 +2026,14 @@ def test_manifest_includes_tunnel_status_widget():
         manifest = yaml.safe_load(fp)
 
     widgets = manifest.get("widgets", [])
-    assert [widget["id"] for widget in widgets] == ["tunnel-status"]
+    assert [widget["id"] for widget in widgets] == ["tunnel-status", "tunnel-overview"]
     assert widgets[0]["type"] == "three-stats"
     assert widgets[0]["endpoint"] == "tunnelsats:9739/api/local/widgets/tunnel-status"
     assert widgets[0]["example"]["items"][0] == {"subtext": "Peers", "text": "5"}
     assert widgets[0]["example"]["items"][1] == {"subtext": "Channels", "text": "3"}
     assert widgets[0]["example"]["items"][2] == {"subtext": "Tunnel", "text": "🟢"}
+    assert widgets[1]["type"] == "three-stats"
+    assert widgets[1]["endpoint"] == "tunnelsats:9739/api/local/widgets/tunnel-overview"
+    assert widgets[1]["example"]["items"][0] == {"subtext": "Tunnel Status", "text": "Connected"}
+    assert widgets[1]["example"]["items"][1] == {"subtext": "Routing Protected", "text": "Yes"}
+    assert widgets[1]["example"]["items"][2] == {"subtext": "Expiration Date", "text": "2026-05-04"}
