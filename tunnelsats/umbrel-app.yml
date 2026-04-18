@@ -2,7 +2,7 @@ manifestVersion: 1.1
 id: tunnelsats
 category: bitcoin
 name: Tunnel⚡Sats
-version: "3.1.8rc"
+version: "3.1.9rc"
 tagline: Secure, Lightning-only VPN routing for your LND and CLN node
 description: >-
   Tunnel⚡Sats provides a premium, privacy-preserving networking layer designed exclusively for LND and Core Lightning node runners. By utilizing high-performance WireGuard tunnels, it solves the 'Home IP' exposure conundrum and enables stable, anonymous clearnet connectivity without compromising your entire Umbrel’s traffic.
@@ -51,3 +51,18 @@ widgets:
           text: "3"
         - subtext: "Tunnel"
           text: "🟢"
+  - id: "tunnel-overview"
+    type: "three-stats"
+    refresh: "5s"
+    endpoint: "tunnelsats:9739/api/local/widgets/tunnel-overview"
+    link: ""
+    example:
+      type: "three-stats"
+      link: ""
+      items:
+        - subtext: "Tunnel Status"
+          text: "Connected"
+        - subtext: "Routing Protected"
+          text: "Yes"
+        - subtext: "Expiration Date"
+          text: "2026-05-04"
