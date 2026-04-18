@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import socket
 import subprocess
 import uuid
 from datetime import datetime, timezone
@@ -97,6 +98,11 @@ LND_RESTART_DELAY = 3  # Seconds to wait for middleware to generate umbrel-lnd.c
 LND_CONTAINER_PATTERN = r"^lightning[_-]lnd[_-]\d+$"
 LND_MIDDLEWARE_PATTERN = r"^lightning[_-]app[_-]\d+$"
 CLN_CONTAINER_PATTERN = r"(^|[_-])(core-lightning|clightning|lightningd)([_-]|$)"
+CLN_RPC_PATH = "/lightning-data/cln/lightning-rpc"
+CLN_RPC_TIMEOUT = 5
+LIGHTNING_WIDGET_PORT = 3006
+LIGHTNING_WIDGET_TIMEOUT = 5
+LIGHTNING_STATS_PATH = "/v1/lnd/widgets/lightning-stats"
 WG_INTERFACE_NAME = "tunnelsatsv2"
 WG_HANDSHAKE_MAX_AGE_SECONDS = 180
 
@@ -791,6 +797,194 @@ def _port_from_endpoint(endpoint):
     return 0
 
 
+def routing_flag_from_config(path, prefixes):
+    if not os.path.exists(path):
+        return False
+
+    try:
+        with open(path, "r", encoding="utf-8") as conf_fp:
+            for line in conf_fp:
+                stripped = line.lstrip()
+                if any(stripped.startswith(prefix) for prefix in prefixes):
+                    return True
+    except (IOError, OSError) as exc:
+        app.logger.warning(f"Failed to read config for routing detection at {path}: {exc}")
+
+    return False
+
+
+def read_tunnelsats_metadata():
+    meta_path = os.path.join(DATA_DIR, META_FILE)
+    if not os.path.exists(meta_path):
+        return {}
+
+    try:
+        with open(meta_path, "r", encoding="utf-8") as meta_fp:
+            meta = json.load(meta_fp)
+            if isinstance(meta, dict):
+                return meta
+    except (IOError, OSError, json.JSONDecodeError) as exc:
+        app.logger.warning(f"Failed to read or parse metadata file {meta_path}: {exc}")
+
+    return {}
+
+
+def get_lightning_widget_base_url():
+    containers = docker_api("/containers/json?all=0") or []
+    lightning_ip = container_ip_by_match(LND_MIDDLEWARE_PATTERN, containers=containers)
+    if lightning_ip:
+        return f"http://{lightning_ip}:{LIGHTNING_WIDGET_PORT}"
+    return f"http://127.0.0.1:{LIGHTNING_WIDGET_PORT}"
+
+
+def fetch_lightning_stats_widget_data():
+    response = requests.get(
+        f"{get_lightning_widget_base_url()}{LIGHTNING_STATS_PATH}",
+        timeout=LIGHTNING_WIDGET_TIMEOUT,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("Lightning stats widget returned a non-object payload")
+    return payload
+
+
+def extract_lightning_stats_counts(widget_data):
+    peers = "-"
+    channels = "-"
+
+    if isinstance(widget_data, dict) and widget_data.get("type") == "four-stats":
+        items = widget_data.get("items")
+        if isinstance(items, list):
+            if len(items) > 0 and isinstance(items[0], dict):
+                peers = str(items[0].get("text", "-")).strip() or "-"
+            if len(items) > 1 and isinstance(items[1], dict):
+                channels = str(items[1].get("text", "-")).strip() or "-"
+
+    return peers, channels
+
+
+def fetch_cln_counts():
+    message = (
+        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getinfo", "params": {}})
+        + "\n\n"
+    ).encode("utf-8")
+
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as rpc_socket:
+        rpc_socket.settimeout(CLN_RPC_TIMEOUT)
+        rpc_socket.connect(CLN_RPC_PATH)
+        rpc_socket.sendall(message)
+
+        payload = None
+        response_bytes = b""
+        while True:
+            chunk = rpc_socket.recv(65536)
+            if not chunk:
+                break
+            response_bytes += chunk
+            try:
+                payload = json.loads(response_bytes.decode("utf-8"))
+                break
+            except json.JSONDecodeError:
+                continue
+
+    if not isinstance(payload, dict):
+        raise ValueError("CLN getinfo returned an invalid payload")
+
+    if payload.get("error"):
+        raise ValueError(f"CLN getinfo returned an error: {payload['error']}")
+
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("CLN getinfo returned a non-object result")
+
+    peers = str(result.get("num_peers", "-")).strip() or "-"
+    channels = str(result.get("num_active_channels", "-")).strip() or "-"
+    return peers, channels
+
+
+def fetch_tunnel_lightning_counts(target_impl):
+    if str(target_impl or "").strip().lower() == "cln":
+        return fetch_cln_counts()
+    return extract_lightning_stats_counts(fetch_lightning_stats_widget_data())
+
+
+def collect_tunnel_widget_state():
+    containers = docker_api("/containers/json?all=0") or []
+    meta = read_tunnelsats_metadata()
+    dataplane = read_dataplane_state()
+    peers = "-"
+    active_channels = "-"
+
+    try:
+        peers, active_channels = fetch_tunnel_lightning_counts(dataplane["target_impl"])
+    except (OSError, requests.RequestException, ValueError) as exc:
+        app.logger.warning(f"Failed to fetch Lightning stats for tunnel widget: {exc}")
+
+    return {
+        "vpn_active": _get_wireguard_state()[0] == "Connected",
+        "lnd_detected": bool(container_ids_by_match(LND_CONTAINER_PATTERN, containers=containers)),
+        "cln_detected": bool(container_ids_by_match(CLN_CONTAINER_PATTERN, containers=containers)),
+        "lnd_routing_active": routing_flag_from_config(LND_CONFIG_PATH, ("externalhosts=",)),
+        "cln_routing_active": routing_flag_from_config(CLN_CONFIG_PATH, ("announce-addr=",)),
+        "server_domain": str(meta.get("serverDomain", "")),
+        "target_impl": dataplane["target_impl"],
+        "peers": peers,
+        "active_channels": active_channels,
+    }
+
+
+def get_tunnel_widget_summary(status_data):
+    lnd_routing_active = bool(status_data.get("lnd_routing_active"))
+    cln_routing_active = bool(status_data.get("cln_routing_active"))
+    lnd_detected = bool(status_data.get("lnd_detected"))
+    cln_detected = bool(status_data.get("cln_detected"))
+    target_impl = str(status_data.get("target_impl", "")).strip().lower()
+
+    if lnd_routing_active or target_impl == "lnd" or lnd_detected:
+        node = "LND"
+    elif cln_routing_active or target_impl == "cln" or cln_detected:
+        node = "CLN"
+    else:
+        node = "None"
+
+    if status_data.get("vpn_active") and (lnd_routing_active or cln_routing_active):
+        tunnel = "🟢"
+    elif status_data.get("vpn_active"):
+        tunnel = "🟡"
+    else:
+        tunnel = "🔴"
+
+    return {
+        "peers": str(status_data.get("peers", "-")).strip() or "-",
+        "channels": str(status_data.get("active_channels", "-")).strip() or "-",
+        "tunnel": tunnel,
+    }
+
+
+def build_tunnel_status_widget(status_data):
+    summary = get_tunnel_widget_summary(status_data)
+    return {
+        "type": "three-stats",
+        "link": "",
+        "refresh": "5s",
+        "items": [
+            {
+                "subtext": "Peers",
+                "text": summary["peers"],
+            },
+            {
+                "subtext": "Channels",
+                "text": summary["channels"],
+            },
+            {
+                "subtext": "Tunnel",
+                "text": summary["tunnel"],
+            },
+        ],
+    }
+
+
 def docker_api(path):
     if not os.path.exists(DOCKER_SOCK):
         return None
@@ -1412,10 +1606,14 @@ def local_status():
     # Dynamic Internal IP Recovery
     vpn_internal_ip = ""
     try:
-        # Source of Truth: the live interface state. 
+        # Source of Truth: the live interface state.
         # check=False in subprocess.run is more robust than check_output if "ip" is missing.
-        res = subprocess.run(["ip", "-4", "addr", "show", "dev", WG_INTERFACE_NAME], 
-                             capture_output=True, text=True, timeout=2)
+        res = subprocess.run(
+            ["ip", "-4", "addr", "show", "dev", WG_INTERFACE_NAME],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
         if res.returncode == 0:
             if match := re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+)", res.stdout):
                 vpn_internal_ip = match.group(1)
@@ -1443,7 +1641,7 @@ def local_status():
     if server_domain:
         s_id = server_domain.split(".")[0]
         meta = get_server_geodata(s_id)
-        
+
         if meta:
             lat = meta["lat"]
             lng = meta["lng"]
@@ -1482,6 +1680,11 @@ def local_status():
             "last_error": dataplane["last_error"],
         }
     )
+
+
+@app.route("/api/local/widgets/tunnel-status", methods=["GET"])
+def local_tunnel_status_widget():
+    return jsonify(build_tunnel_status_widget(collect_tunnel_widget_state()))
 
 
 @app.route("/api/local/upload-config", methods=["POST"])

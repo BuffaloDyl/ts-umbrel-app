@@ -10,6 +10,7 @@ import tempfile
 import time
 from unittest.mock import patch, MagicMock
 import requests
+import yaml
 from app import app
 import app as app_module
 
@@ -138,6 +139,48 @@ def test_local_status_reports_connected_when_latest_handshake_is_exactly_thresho
     data = json.loads(res.data)
     assert data['wg_status'] == 'Connected'
     assert data['vpn_active'] is True
+
+
+def test_fetch_cln_counts_reads_getinfo_from_unix_socket():
+    mock_socket = MagicMock()
+    mock_socket.recv.side_effect = [
+        b'{"jsonrpc":"2.0","id":1,"result":{"num_peers":1,"num_active_channels":0}}'
+    ]
+
+    with patch('app.socket.socket') as mock_socket_factory:
+        mock_socket_factory.return_value.__enter__.return_value = mock_socket
+
+        peers, channels = app_module.fetch_cln_counts()
+
+    assert (peers, channels) == ("1", "0")
+    mock_socket.connect.assert_called_once_with(app_module.CLN_RPC_PATH)
+    mock_socket.sendall.assert_called_once()
+
+
+def test_fetch_tunnel_lightning_counts_uses_cln_socket_when_target_impl_is_cln():
+    with patch('app.fetch_cln_counts', return_value=("1", "0")) as mock_cln_counts:
+        with patch('app.fetch_lightning_stats_widget_data') as mock_widget_data:
+            assert app_module.fetch_tunnel_lightning_counts("cln") == ("1", "0")
+
+    mock_cln_counts.assert_called_once_with()
+    mock_widget_data.assert_not_called()
+
+
+def test_fetch_tunnel_lightning_counts_uses_lnd_widget_when_target_impl_is_not_cln():
+    widget_data = {
+        "type": "four-stats",
+        "items": [
+            {"subtext": "Peers", "text": "5"},
+            {"subtext": "Channels", "text": "3"},
+        ],
+    }
+
+    with patch('app.fetch_lightning_stats_widget_data', return_value=widget_data) as mock_widget_data:
+        with patch('app.fetch_cln_counts') as mock_cln_counts:
+            assert app_module.fetch_tunnel_lightning_counts("lnd") == ("5", "3")
+
+    mock_widget_data.assert_called_once_with()
+    mock_cln_counts.assert_not_called()
 
 
 @patch('app.time.time', return_value=1_000_000)
@@ -1854,3 +1897,89 @@ def test_claim_subscription_invalid_config(client, data_dir):
         data = json.loads(res.data)
         assert data["success"] is False
         assert "Invalid upstream payload" in data["error"]
+
+
+class TestLocalWidgets:
+    def test_tunnel_status_widget_reports_protected_lnd_server(self, client):
+        status_payload = {
+            "vpn_active": True,
+            "lnd_routing_active": True,
+            "cln_routing_active": False,
+            "lnd_detected": True,
+            "cln_detected": False,
+            "target_impl": "lnd",
+            "server_domain": "de2.tunnelsats.com",
+            "peers": "5",
+            "active_channels": "3",
+        }
+
+        with patch('app.collect_tunnel_widget_state', return_value=status_payload):
+            res = client.get('/api/local/widgets/tunnel-status')
+
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert data["type"] == "three-stats"
+        assert data["refresh"] == "5s"
+        assert data["items"][0] == {"subtext": "Peers", "text": "5"}
+        assert data["items"][1] == {"subtext": "Channels", "text": "3"}
+        assert data["items"][2] == {"subtext": "Tunnel", "text": "🟢"}
+
+    def test_tunnel_status_widget_reports_connected_without_routing(self, client):
+        status_payload = {
+            "vpn_active": True,
+            "lnd_routing_active": False,
+            "cln_routing_active": False,
+            "lnd_detected": False,
+            "cln_detected": False,
+            "target_impl": "",
+            "server_domain": "",
+            "peers": "-",
+            "active_channels": "-",
+        }
+
+        with patch('app.collect_tunnel_widget_state', return_value=status_payload):
+            res = client.get('/api/local/widgets/tunnel-status')
+
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert data["items"][0]["text"] == "-"
+        assert data["items"][1]["text"] == "-"
+        assert data["items"][2]["text"] == "🟡"
+
+    def test_tunnel_status_widget_reports_down_with_detected_cln(self, client):
+        status_payload = {
+            "vpn_active": False,
+            "lnd_routing_active": False,
+            "cln_routing_active": False,
+            "lnd_detected": False,
+            "cln_detected": True,
+            "target_impl": "cln",
+            "server_domain": "us1.tunnelsats.com",
+            "peers": "12",
+            "active_channels": "7",
+        }
+
+        with patch('app.collect_tunnel_widget_state', return_value=status_payload):
+            res = client.get('/api/local/widgets/tunnel-status')
+
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert data["items"][0]["text"] == "12"
+        assert data["items"][1]["text"] == "7"
+        assert data["items"][2]["text"] == "🔴"
+
+
+def test_manifest_includes_tunnel_status_widget():
+    manifest_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "tunnelsats", "umbrel-app.yml")
+    )
+    with open(manifest_path, "r", encoding="utf-8") as fp:
+        manifest = yaml.safe_load(fp)
+
+    widgets = manifest.get("widgets", [])
+    assert [widget["id"] for widget in widgets] == ["tunnel-status"]
+    assert widgets[0]["type"] == "three-stats"
+    assert widgets[0]["endpoint"] == "tunnelsats:9739/api/local/widgets/tunnel-status"
+    assert widgets[0]["example"]["items"][0] == {"subtext": "Peers", "text": "5"}
+    assert widgets[0]["example"]["items"][1] == {"subtext": "Channels", "text": "3"}
+    assert widgets[0]["example"]["items"][2] == {"subtext": "Tunnel", "text": "🟢"}
