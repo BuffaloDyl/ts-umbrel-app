@@ -5,7 +5,7 @@ APP_NAME="tunnelsats"
 WG_IFACE="tunnelsatsv2"
 WG_CONF_PATH="/etc/wireguard/${WG_IFACE}.conf"
 DOCKER_SOCK="/var/run/docker.sock"
-STATE_FILE="/tmp/tunnelsats_state.json"
+STATE_FILE="/data/tunnelsats-state.json"
 RECONCILE_TRIGGER_DIR="/tmp/tunnelsats_reconcile_trigger.d"
 RECONCILE_RESULT_DIR="/tmp/tunnelsats_reconcile_result.d"
 RECONCILE_TRIGGER_LEGACY="/tmp/tunnelsats_reconcile_trigger"
@@ -16,6 +16,7 @@ DOCKER_NETWORK_SUBNET="10.9.9.0/25"
 DOCKER_TARGET_IP="10.9.9.9"
 LN_TARGET_PORT="9735" # Default to LND, will be updated in detect_lightning_container
 RECONCILE_INTERVAL=30
+WG_HANDSHAKE_MAX_AGE_SECONDS=180
 
 API_PID=""
 LAST_RECONCILE_EPOCH=0
@@ -50,6 +51,31 @@ reconcile_result_path() {
     printf '%s/%s.json' "${RECONCILE_RESULT_DIR}" "${request_id}"
 }
 
+wg_status_connected() {
+    local handshakes_output
+    local now_epoch
+
+    if ! handshakes_output="$(wg show "${WG_IFACE}" latest-handshakes 2>/dev/null)"; then
+        return 1
+    fi
+
+    now_epoch="$(date +%s)"
+    while IFS=$'\t' read -r _peer latest_handshake_epoch; do
+        [ -n "${latest_handshake_epoch:-}" ] || continue
+        case "${latest_handshake_epoch}" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        if [ "${latest_handshake_epoch}" -le 0 ]; then
+            continue
+        fi
+        if [ $((now_epoch - latest_handshake_epoch)) -le "${WG_HANDSHAKE_MAX_AGE_SECONDS}" ]; then
+            return 0
+        fi
+    done <<< "${handshakes_output}"
+
+    return 1
+}
+
 write_state() {
     local tmp
     tmp="$(mktemp "${STATE_FILE}.tmp.XXXXXX")"
@@ -60,6 +86,7 @@ write_state() {
         --arg target_ip "${DOCKER_TARGET_IP:-}" \
         --arg target_impl "${TARGET_IMPL:-}" \
         --arg forwarding_port "${FORWARDING_PORT:-}" \
+        --argjson vpn_active "$(if wg_status_connected; then echo true; else echo false; fi)" \
         --argjson rules_synced "${RULES_SYNCED}" \
         --arg last_error "${LAST_ERROR:-}" \
         --arg docker_network_name "${DOCKER_NETWORK_NAME}" \
@@ -72,6 +99,7 @@ write_state() {
             target_ip: $target_ip,
             target_impl: $target_impl,
             forwarding_port: $forwarding_port,
+            vpn_active: $vpn_active,
             rules_synced: $rules_synced,
             last_reconcile_at: $last_reconcile_at,
             last_error: (if $last_error == "" then null else $last_error end),
