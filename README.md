@@ -50,6 +50,9 @@ Because Umbrel is immutable, host-level WireGuard services and persistent host n
    - Inbound DNAT from WireGuard forwarding port to `10.9.9.9:9735` (or dynamically selected ports).
    - FORWARD rules between the WireGuard interface and the docker bridge.
 5. A periodic reconcile loop repairs drift after restarts or localized network changes.
+6. Umbrel widget fetching is handled by a separate `widget-proxy` service on normal Docker networking.
+   Umbrel resolves widget endpoints by compose service name and container IP, so it cannot fetch widgets directly from the host-networked `tunnelsats` service.
+   The proxy forwards `/api/local/widgets/*` requests to the main app on `host.docker.internal:9739` while leaving the dataplane service on host networking.
 
 ---
 

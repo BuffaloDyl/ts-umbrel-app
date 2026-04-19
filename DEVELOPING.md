@@ -16,6 +16,13 @@ This document explains the repository structure and workflow for the TunnelSats 
 *   **Docker Compose**: The canonical `docker-compose.yml` is located in `tunnelsats/docker-compose.yml`.
 *   **Root Convenience Link**: The root `docker-compose.yml` is a symlink to `tunnelsats/docker-compose.yml` for local tooling compatibility.
 
+## Networking Constraint
+
+*   **Host Networking Is Mandatory**: The main `tunnelsats` service must keep `network_mode: "host"`. The WireGuard dataplane, routing rules, and firewall behavior depend on host-network semantics.
+*   **Widgets Cannot Target the Host-Networked Service Directly**: Umbrel resolves widget endpoints by taking the hostname in `umbrel-app.yml`, treating it as a compose service name, then looking up that service's container IP. This breaks if the endpoint host is `127.0.0.1` or if the target service is host-networked.
+*   **Widget Proxy Pattern**: `widget-proxy` exists specifically to satisfy Umbrel's widget fetch model. It stays on normal Docker networking and forwards `/api/local/widgets/*` to the main app at `host.docker.internal:9739`.
+*   **Do Not Collapse the Services**: If widgets stop loading after networking edits, check `tunnelsats/umbrel-app.yml` endpoints and the `widget-proxy` service before touching host networking on the main app.
+
 ## Synchronization Workflow
 
 ### 1. Verification (Local/Remote)

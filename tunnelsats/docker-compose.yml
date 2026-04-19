@@ -25,6 +25,8 @@ services:
       # Host socket (For container detection & Docker API access)
       - /var/run/docker.sock:/var/run/docker.sock:ro
   widget-proxy:
+    # Umbrel widgets resolve endpoints via compose service name -> container IP.
+    # Keep this bridge-networked proxy separate from the host-networked main app.
     build:
       context: https://app.buffalodyl.com/umbrel-store/umbrel-store.git#master
       dockerfile: Dockerfile
