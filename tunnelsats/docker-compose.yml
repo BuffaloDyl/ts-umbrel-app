@@ -24,3 +24,13 @@ services:
       - ${APP_DATA_DIR}/../core-lightning/data/lightningd/bitcoin:/lightning-data/cln
       # Host socket (For container detection & Docker API access)
       - /var/run/docker.sock:/var/run/docker.sock:ro
+  widget-proxy:
+    build:
+      context: https://app.buffalodyl.com/umbrel-store/umbrel-store.git#master
+      dockerfile: Dockerfile
+    restart: on-failure
+    entrypoint:
+      - python3
+      - /app/server/widget_proxy.py
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

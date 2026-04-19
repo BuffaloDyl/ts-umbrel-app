@@ -2030,12 +2030,12 @@ def test_manifest_includes_tunnel_status_widget():
     widgets = manifest.get("widgets", [])
     assert [widget["id"] for widget in widgets] == ["tunnel-status", "tunnel-overview"]
     assert widgets[0]["type"] == "three-stats"
-    assert widgets[0]["endpoint"] == "127.0.0.1:9739/api/local/widgets/tunnel-status"
+    assert widgets[0]["endpoint"] == "widget-proxy:9739/api/local/widgets/tunnel-status"
     assert widgets[0]["example"]["items"][0] == {"subtext": "Peers", "text": "5"}
     assert widgets[0]["example"]["items"][1] == {"subtext": "Channels", "text": "3"}
     assert widgets[0]["example"]["items"][2] == {"subtext": "Tunnel", "text": "🟢"}
     assert widgets[1]["type"] == "four-stats"
-    assert widgets[1]["endpoint"] == "127.0.0.1:9739/api/local/widgets/tunnel-overview"
+    assert widgets[1]["endpoint"] == "widget-proxy:9739/api/local/widgets/tunnel-overview"
     assert widgets[1]["example"]["items"][0] == {"title": "Tunnel", "text": "🟢"}
     assert widgets[1]["example"]["items"][1] == {"title": "Protected", "text": "🟢"}
     assert widgets[1]["example"]["items"][2] == {"title": "Expires", "text": "May 4 2026"}
