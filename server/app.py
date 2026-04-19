@@ -993,7 +993,7 @@ def format_tunnel_widget_expiration(expires_at):
 
     try:
         expiry_dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return expiry_dt.strftime("%b %d").replace(" 0", " ")
+        return expiry_dt.strftime("%b %d %Y").replace(" 0", " ")
     except (ValueError, TypeError):
         if "T" in value:
             fallback = value.split("T", 1)[0].strip()

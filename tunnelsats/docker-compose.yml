@@ -7,8 +7,7 @@ services:
       dockerfile: Dockerfile
     container_name: tunnelsats
     restart: on-failure
-    ports:
-      - "9739:9739"
+    network_mode: "host"
     cap_add:
       - NET_ADMIN
       - NET_RAW

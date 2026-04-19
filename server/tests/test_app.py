@@ -1992,7 +1992,7 @@ class TestLocalWidgets:
         assert data["refresh"] == "5s"
         assert data["items"][0] == {"title": "Tunnel", "text": "🟢"}
         assert data["items"][1] == {"title": "Protected", "text": "🟢"}
-        assert data["items"][2] == {"title": "Expires", "text": "May 4"}
+        assert data["items"][2] == {"title": "Expires", "text": "May 4 2026"}
         assert data["items"][3] == {"title": "Node", "text": "LND"}
 
     def test_tunnel_overview_widget_reports_unprotected_without_expiry(self, client):
@@ -2038,5 +2038,5 @@ def test_manifest_includes_tunnel_status_widget():
     assert widgets[1]["endpoint"] == "tunnelsats:9739/api/local/widgets/tunnel-overview"
     assert widgets[1]["example"]["items"][0] == {"title": "Tunnel", "text": "🟢"}
     assert widgets[1]["example"]["items"][1] == {"title": "Protected", "text": "🟢"}
-    assert widgets[1]["example"]["items"][2] == {"title": "Expires", "text": "May 4"}
+    assert widgets[1]["example"]["items"][2] == {"title": "Expires", "text": "May 4 2026"}
     assert widgets[1]["example"]["items"][3] == {"title": "Node", "text": "LND"}

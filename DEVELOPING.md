@@ -57,6 +57,7 @@ npm run promote
 - `scripts/test.sh persistence`: Verifies that configuration data survives Umbrel 1.x uninstallation.
 - `tunnelsats/scripts/verify.sh dataplane`: Automated health check for local/remote installations (must be executed with `sudo`).
 - `umbrel-app.yml`: Main Umbrel app manifest (located in `tunnelsats/`).
+- `docs/widget-types.md`: Practical reference for the widget payload shapes we currently know how to build.
 
 > [!IMPORTANT]
 > **Data Persistence**: TunnelSats maps its data volume to a peer directory (`../tunnelsats-data`) on Umbrel to prevent data loss when the app is uninstalled via the App Manager. Do not change this mapping without consulting the persistence documentation.
