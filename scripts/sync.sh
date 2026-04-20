@@ -36,8 +36,9 @@ usage() {
     exit 1
 }
 
-# Hot-patch the running tunnelsats container with local code.
-# This is the dev inner loop: rsync to staging → docker cp → restart.
+# Hot-patch the running tunnelsats app with local code.
+# This is the dev inner loop: rsync to staging → refresh node app metadata →
+# recreate containers → docker cp source into each service → restart.
 # Does NOT touch app-stores. The community store pulls from GitHub automatically.
 run_node() {
     log_info "Hot-patching tunnelsats on ${UMBREL_HOST}..."
@@ -70,17 +71,26 @@ run_node() {
         "${REPO_ROOT}/" \
         umbrel@${UMBREL_HOST}:/home/umbrel/dev-patch/
 
-    # 3. Recreate → Inject → Restart (the deploy.py pattern)
-    log_info "Injecting (rm → up → cp → restart)..."
-    REMOTE_CMD="docker rm -f ${APP_ID} 2>/dev/null || true && \
-                APP_DATA_DIR=${UMBREL_APP_DATA} docker compose -f ${UMBREL_COMPOSE} up -d && \
-                for i in \$(seq 1 10); do [ \"\$(docker inspect -f '{{.State.Running}}' ${APP_ID} 2>/dev/null)\" = \"true\" ] && break; sleep 1; done && \
+    # 3. Refresh node app metadata and recreate containers
+    log_info "Injecting compose, manifest, and source patches..."
+    REMOTE_CMD="cp /home/umbrel/dev-patch/tunnelsats/docker-compose.yml ${UMBREL_COMPOSE} && \
+                cp /home/umbrel/dev-patch/tunnelsats/umbrel-app.yml ${UMBREL_APP_DATA}/umbrel-app.yml && \
+                docker rm -f ${APP_ID} widget-proxy 2>/dev/null || true && \
+                APP_DATA_DIR=${UMBREL_APP_DATA} docker compose -f ${UMBREL_COMPOSE} up -d --no-start && \
+                for svc in ${APP_ID} widget-proxy; do \
+                    for i in \$(seq 1 10); do \
+                        docker inspect \"\${svc}\" >/dev/null 2>&1 && break; \
+                        sleep 1; \
+                    done; \
+                done && \
                 docker cp /home/umbrel/dev-patch/server/. ${APP_ID}:/app/server/ && \
                 docker cp /home/umbrel/dev-patch/web/. ${APP_ID}:/app/web/ && \
                 docker cp /home/umbrel/dev-patch/scripts/. ${APP_ID}:/app/scripts/ && \
                 docker cp /home/umbrel/dev-patch/tunnelsats/umbrel-app.yml ${APP_ID}:/app/umbrel-app.yml && \
-                docker exec ${APP_ID} chmod +x /app/scripts/entrypoint.sh /app/scripts/sync.sh 2>/dev/null; \
-                docker restart ${APP_ID}"
+                docker cp /home/umbrel/dev-patch/server/. widget-proxy:/app/server/ && \
+                docker exec ${APP_ID} chmod +x /app/scripts/entrypoint.sh /app/scripts/sync.sh 2>/dev/null || true && \
+                docker start ${APP_ID} widget-proxy >/dev/null && \
+                docker restart ${APP_ID} widget-proxy >/dev/null"
 
     ${SSH_PREFIX}ssh -o StrictHostKeyChecking=accept-new umbrel@${UMBREL_HOST} "${REMOTE_CMD}"
 
