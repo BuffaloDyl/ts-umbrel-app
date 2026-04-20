@@ -2,8 +2,9 @@ version: "3.7"
 
 services:
   tunnelsats:
-    # Use the specific version tag for production
-    image: tunnelsats/ts-umbrel-app:3.1.0@sha256:27be5d81fdf2a1b83de64ee097f883314875cf545a85d85b09f63f6a7aeef621
+    build:
+      context: https://github.com/BuffaloDyl/ts-umbrel-app.git#refork-low-impact-widget
+      dockerfile: Dockerfile
     container_name: tunnelsats
     restart: on-failure
     network_mode: "host"
@@ -24,7 +25,10 @@ services:
       # Host socket (For container detection & Docker API access)
       - /var/run/docker.sock:/var/run/docker.sock:ro
   widget-proxy:
-    image: tunnelsats/ts-umbrel-app:3.1.0@sha256:27be5d81fdf2a1b83de64ee097f883314875cf545a85d85b09f63f6a7aeef621
+    build:
+      context: https://github.com/BuffaloDyl/ts-umbrel-app.git#refork-low-impact-widget
+      dockerfile: Dockerfile
+    container_name: widget-proxy
     restart: on-failure
     entrypoint:
       - python3
